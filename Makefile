@@ -65,6 +65,7 @@ DLL_CXXFLAGS := $(WARN) $(OPT) -std=c++17 -DBUILD_DLL -shared -Iinclude $(ARCH_F
 # 目标
 MAIN_EXE := $(BIN_DIR)/MythwareHacker_$(ARCH_SUFFIX).exe
 DLL_LIB  := $(BIN_DIR)/MythwareHideHook_$(ARCH_SUFFIX).dll
+HELPER_EXE := $(BIN_DIR)/inject_helper_x86.exe
 
 # 对象文件
 MAIN_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(MAIN_SRCS))
@@ -72,7 +73,7 @@ MAIN_OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(MAIN_SRCS))
 # 默认目标
 .PHONY: all clean dirs
 
-all: dirs $(DLL_LIB) $(MAIN_EXE)
+all: dirs $(DLL_LIB) $(MAIN_EXE) $(HELPER_EXE)
 
 dirs:
 	@mkdir -p $(OBJ_DIR)/ui $(OBJ_DIR)/core $(OBJ_DIR)/utils $(BIN_DIR)
@@ -87,6 +88,11 @@ $(DLL_LIB): $(DLL_SRC) dirs
 	$(CXX) $(DLL_SRC) -o $@ $(DLL_CXXFLAGS) -s
 	@echo "[OK] Built $(DLL_LIB)"
 
+# 32位注入辅助程序（始终用32位编译器）
+$(HELPER_EXE): $(SRC_DIR)/tools/inject_helper.cpp dirs
+	i686-w64-mingw32-g++ $(SRC_DIR)/tools/inject_helper.cpp -o $@ -O2 -s -static-libstdc++ -static-libgcc -m32
+	@echo "[OK] Built $(HELPER_EXE)"
+
 # 通用编译规则
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
@@ -96,4 +102,5 @@ clean:
 	@rm -rf bin/obj_32 bin/obj_64
 	@rm -f $(BIN_DIR)/MythwareHacker_x86.exe $(BIN_DIR)/MythwareHacker_x64.exe
 	@rm -f $(BIN_DIR)/MythwareHideHook_x86.dll $(BIN_DIR)/MythwareHideHook_x64.dll
+	@rm -f $(BIN_DIR)/inject_helper_x86.exe
 	@echo "[OK] Cleaned"

@@ -35,6 +35,95 @@ static std::wstring GetSelfDir()
     return std::wstring(path);
 }
 
+// 内部：64位主程序通过32位辅助程序注入32位目标进程
+// 辅助程序: inject_helper_x86.exe
+// 仅支持 RemoteSetAffinity 函数
+static Result InjectViaHelper(DWORD pid, HWND hwnd,
+                              const std::wstring& dllName,
+                              const char* funcName,
+                              const void* params,
+                              size_t paramsSize)
+{
+    Result result = {};
+    result.success = false;
+
+    // 目前辅助程序只支持 RemoteSetAffinity
+    if (strcmp(funcName, "RemoteSetAffinity") != 0) {
+        result.error = L"跨位数注入仅支持 RemoteSetAffinity，不支持: " + AsciiToWide(funcName);
+        return result;
+    }
+
+    // 从参数中提取 affinity 值
+    DWORD affinity = 0;
+    if (params && paramsSize >= sizeof(DWORD)) {
+        affinity = *(const DWORD*)params;
+    }
+
+    // 构造命令行: inject_helper_x86.exe <pid> <hwnd> <affinity>
+    std::wstring helperPath = GetSelfDir() + L"inject_helper_x86.exe";
+    wchar_t cmdLine[1024];
+    swprintf(cmdLine, 1024, L"\"%ls\" %lu %lu 0x%lx",
+             helperPath.c_str(), pid, (DWORD)(INT_PTR)hwnd, affinity);
+
+    // 创建管道读取辅助程序输出
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
+    HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
+    if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+        result.error = L"CreatePipe 失败: " + std::to_wstring(GetLastError());
+        return result;
+    }
+
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = hWritePipe;
+    si.hStdError = hWritePipe;
+    si.hStdInput = nullptr;
+    PROCESS_INFORMATION pi = {};
+
+    std::wstring cmd(cmdLine);
+    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE,
+                             CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    CloseHandle(hWritePipe);
+    if (!ok) {
+        result.error = L"启动32位辅助程序失败: " + std::to_wstring(GetLastError()) +
+                       L" 路径: " + helperPath;
+        CloseHandle(hReadPipe);
+        return result;
+    }
+
+    // 读取输出
+    char buf[512] = {};
+    DWORD bytesRead = 0;
+    ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, nullptr);
+    buf[bytesRead] = '\0';
+
+    WaitForSingleObject(pi.hProcess, 10000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    CloseHandle(hReadPipe);
+
+    // 解析输出
+    if (strncmp(buf, "OK", 2) == 0) {
+        DWORD exitCode = 0;
+        sscanf(buf, "OK %lu", &exitCode);
+        result.success = true;
+        result.exitCode = exitCode;
+        if (exitCode != 0) {
+            result.error = L"远程调用返回错误码: " + std::to_wstring(exitCode);
+        }
+        logger::Info(L"32位辅助程序注入成功 PID=" + std::to_wstring(pid) +
+                     L" 退出码=" + std::to_wstring(exitCode));
+    } else {
+        std::wstring errStr;
+        for (int i = 0; buf[i]; i++) errStr += (wchar_t)(unsigned char)buf[i];
+        result.error = L"32位辅助程序失败: " + errStr;
+        logger::Warn(L"32位辅助程序注入失败: " + errStr);
+    }
+
+    return result;
+}
+
 // 内部：根据自身位数选择正确的 DLL 文件名后缀
 static std::wstring GetArchDllName(const std::wstring& dllName)
 {
@@ -79,6 +168,11 @@ Result InjectAndCall(HWND hwnd,
     }
 
     if (!CheckArchMatch(hProcess, result.error)) {
+        // 64位主程序遇到32位目标：启动32位辅助程序
+        if (common::IsSelf64Bit() && !common::IsProcess64Bit(hProcess)) {
+            CloseHandle(hProcess);
+            return InjectViaHelper(pid, hwnd, dllName, funcName, params, paramsSize);
+        }
         CloseHandle(hProcess);
         return result;
     }
