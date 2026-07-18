@@ -1,0 +1,396 @@
+// process_control.cpp - 极域进程控制实现
+#include "core/process_control.h"
+#include "utils/log.h"
+
+namespace pctl {
+
+static const wchar_t* STUDENT_MAIN = L"StudentMain.exe";
+
+static bool g_mythwareSuspended = false;
+
+// 内部：通过进程名查找 PID
+static DWORD FindProcessByName(const std::wstring& name)
+{
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return 0;
+
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(pe);
+    DWORD pid = 0;
+
+    if (Process32FirstW(hSnap, &pe)) {
+        do {
+            if (_wcsicmp(pe.szExeFile, name.c_str()) == 0) {
+                pid = pe.th32ProcessID;
+                break;
+            }
+        } while (Process32NextW(hSnap, &pe));
+    }
+    CloseHandle(hSnap);
+    return pid;
+}
+
+// 内部：从注册表读取极域安装路径
+static std::wstring GetMythwarePath()
+{
+    HKEY hKey = nullptr;
+    wchar_t path[MAX_PATH] = {};
+    DWORD size = sizeof(path);
+
+    // 常见注册表位置
+    const wchar_t* keys[] = {
+        L"SOFTWARE\\TopDomain\\e-learning Class Standard",
+        L"SOFTWARE\\WOW6432Node\\TopDomain\\e-learning Class Standard",
+        L"SOFTWARE\\TopDomain\\极域电子教室",
+        nullptr
+    };
+
+    for (int i = 0; keys[i]; i++) {
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, keys[i], 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+            if (RegQueryValueExW(hKey, L"Path", nullptr, nullptr, (LPBYTE)path, &size) == ERROR_SUCCESS) {
+                RegCloseKey(hKey);
+                std::wstring p(path);
+                if (!p.empty() && p.back() != L'\\') p += L'\\';
+                p += STUDENT_MAIN;
+                return p;
+            }
+            RegCloseKey(hKey);
+        }
+    }
+    return L"";
+}
+
+MythwareStatus GetMythwareStatus()
+{
+    MythwareStatus status = {};
+    status.state = MythwareState::NotRunning;
+    status.pid = FindProcessByName(STUDENT_MAIN);
+
+    if (status.pid == 0) {
+        g_mythwareSuspended = false;
+        return status;
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, status.pid);
+    if (!hProcess) {
+        status.state = MythwareState::NoResponse;
+        return status;
+    }
+
+    // 获取版本信息
+    wchar_t exePath[MAX_PATH] = {};
+    if (GetModuleFileNameExW(hProcess, nullptr, exePath, MAX_PATH) > 0) {
+        status.exePath = exePath;
+        // 读取版本资源
+        DWORD dummy = 0;
+        DWORD verSize = GetFileVersionInfoSizeW(exePath, &dummy);
+        if (verSize > 0) {
+            std::vector<BYTE> verData(verSize);
+            if (GetFileVersionInfoW(exePath, 0, verSize, verData.data())) {
+                VS_FIXEDFILEINFO* ffi = nullptr;
+                UINT ffiLen = 0;
+                if (VerQueryValueW(verData.data(), L"\\", (LPVOID*)&ffi, &ffiLen) && ffi) {
+                    wchar_t buf[64];
+                    swprintf(buf, 64, L"%d.%d.%d.%d",
+                             HIWORD(ffi->dwProductVersionMS), LOWORD(ffi->dwProductVersionMS),
+                             HIWORD(ffi->dwProductVersionLS), LOWORD(ffi->dwProductVersionLS));
+                    status.version = buf;
+                }
+            }
+        }
+    }
+
+    // 简化：判断是否无响应
+    if (g_mythwareSuspended) {
+        status.state = MythwareState::Suspended;
+    } else if (WaitForInputIdle(hProcess, 1000) == WAIT_FAILED) {
+        status.state = MythwareState::NoResponse;
+    } else {
+        status.state = MythwareState::Running;
+    }
+
+    CloseHandle(hProcess);
+    return status;
+}
+
+bool KillMythware()
+{
+    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    if (pid == 0) {
+        logger::Info(L"极域未运行，无需杀进程");
+        return true;
+    }
+
+    // 方法1：直接 TerminateProcess（需要 PROCESS_TERMINATE 权限）
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
+    if (hProcess) {
+        if (TerminateProcess(hProcess, 1)) {
+            WaitForSingleObject(hProcess, 3000);
+            CloseHandle(hProcess);
+            logger::Info(L"已杀掉极域进程 PID=" + std::to_wstring(pid));
+            return true;
+        }
+        CloseHandle(hProcess);
+    }
+
+    // 方法2：用 DebugActiveProcessStop（先附加再停止，可绕过部分保护）
+    if (DebugActiveProcess(pid)) {
+        Sleep(200);
+        DebugActiveProcessStop(pid);
+        logger::Info(L"通过 Debug 方式停止极域 PID=" + std::to_wstring(pid));
+        return true;
+    }
+
+    logger::Error(L"杀极域进程失败 PID=" + std::to_wstring(pid) + L" 错误: " + std::to_wstring(GetLastError()));
+    return false;
+}
+
+bool StartMythware()
+{
+    std::wstring path = GetMythwarePath();
+    if (path.empty()) {
+        logger::Error(L"找不到极域安装路径");
+        return false;
+    }
+
+    // 降权到登录用户启动（避免以管理员权限启动极域）
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+
+    // 用 explorer.exe 作为父进程启动（实现降权）
+    // 简化实现：直接 CreateProcess
+    std::wstring cmd = L"\"" + path + L"\"";
+
+    BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE,
+                             0, nullptr, nullptr, &si, &pi);
+    if (ok) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        logger::Info(L"已启动极域: " + path);
+        return true;
+    }
+
+    logger::Error(L"启动极域失败: " + path + L" 错误: " + std::to_wstring(GetLastError()));
+    return false;
+}
+
+// 内部：枚举进程所有线程，挂起或恢复
+static bool ToggleProcessThreads(DWORD pid, bool suspend)
+{
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return false;
+
+    THREADENTRY32 te;
+    te.dwSize = sizeof(te);
+    int count = 0;
+
+    if (Thread32First(hSnap, &te)) {
+        do {
+            if (te.th32OwnerProcessID == pid) {
+                HANDLE hThread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+                if (hThread) {
+                    if (suspend)
+                        SuspendThread(hThread);
+                    else
+                        ResumeThread(hThread);
+                    CloseHandle(hThread);
+                    count++;
+                }
+            }
+        } while (Thread32Next(hSnap, &te));
+    }
+    CloseHandle(hSnap);
+
+    logger::Info(std::wstring(suspend ? L"挂起" : L"恢复") + L"极域 " +
+              std::to_wstring(count) + L" 个线程");
+    return count > 0;
+}
+
+bool SuspendMythware()
+{
+    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    if (pid == 0) return false;
+    if (ToggleProcessThreads(pid, true)) {
+        g_mythwareSuspended = true;
+        return true;
+    }
+    return false;
+}
+
+bool ResumeMythware()
+{
+    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    if (pid == 0) return false;
+    if (ToggleProcessThreads(pid, false)) {
+        g_mythwareSuspended = false;
+        return true;
+    }
+    return false;
+}
+
+// 内部：查找极域广播窗口
+// 极域广播窗口类名通常是 "T.TopDomain.Student.BroadcastForm" 或类似
+struct FindBroadcastData { HWND hwnd; };
+
+static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
+{
+    auto* d = reinterpret_cast<FindBroadcastData*>(lParam);
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    wchar_t cls[256] = {};
+    GetClassNameW(hwnd, cls, 256);
+
+    if (wcsstr(cls, L"TopDomain") || wcsstr(cls, L"Broadcast") ||
+        wcsstr(cls, L"Mythware")) {
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+        int screenW = GetSystemMetrics(SM_CXSCREEN);
+        int screenH = GetSystemMetrics(SM_CYSCREEN);
+        if (rc.right - rc.left >= screenW * 0.95 &&
+            rc.bottom - rc.top >= screenH * 0.95) {
+            d->hwnd = hwnd;
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static HWND FindBroadcastWindow()
+{
+    FindBroadcastData data = {};
+    EnumWindows(FindBroadcastProc, reinterpret_cast<LPARAM>(&data));
+    return data.hwnd;
+}
+
+bool BroadcastToWindowed()
+{
+    HWND hwnd = FindBroadcastWindow();
+    if (!hwnd) {
+        logger::Warn(L"未找到极域广播窗口");
+        return false;
+    }
+
+    // 方案1：向广播窗口发送 WM_COMMAND 模拟点击"窗口化"按钮（MythwareToolkit 方式）
+    // 极域广播窗口的窗口化按钮命令 ID 通常为 1004
+    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1004, BN_CLICKED), 0);
+    Sleep(300);
+
+    // 检查窗口是否已经变小（不再是全屏）
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+
+    if (rc.right - rc.left < screenW * 0.95 || rc.bottom - rc.top < screenH * 0.95) {
+        logger::Info(L"已通过 WM_COMMAND 将广播窗口化");
+        return true;
+    }
+
+    // 方案2：直接修改窗口样式（回退方案）
+    int w = screenW / 2;
+    int h = screenH / 2;
+    int x = (screenW - w) / 2;
+    int y = (screenH - h) / 2;
+
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    style &= ~WS_POPUP;
+    style |= WS_OVERLAPPEDWINDOW | WS_VISIBLE;
+    SetWindowLong(hwnd, GWL_STYLE, style);
+
+    SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    logger::Info(L"已通过修改样式将广播窗口化");
+    return true;
+}
+
+bool BroadcastToFullscreen()
+{
+    HWND hwnd = FindBroadcastWindow();
+    if (!hwnd) return false;
+
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    style |= WS_POPUP;
+    style &= ~WS_OVERLAPPEDWINDOW;
+    SetWindowLong(hwnd, GWL_STYLE, style);
+
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screenW, screenH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    logger::Info(L"已将广播全屏化");
+    return true;
+}
+
+struct BlackScreenData { HWND hwnd; };
+
+static BOOL CALLBACK FindBlackScreenProc(HWND hwnd, LPARAM lParam)
+{
+    auto* d = reinterpret_cast<BlackScreenData*>(lParam);
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    wchar_t cls[256] = {};
+    wchar_t title[256] = {};
+    GetClassNameW(hwnd, cls, 256);
+    GetWindowTextW(hwnd, title, 256);
+
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+
+    if ((wcsstr(cls, L"TopDomain") || wcsstr(cls, L"BlackScreen") ||
+         wcsstr(title, L"黑屏") || wcsstr(title, L"安静") || wcsstr(title, L"Black")) &&
+        rc.right - rc.left >= screenW * 0.95 &&
+        rc.bottom - rc.top >= screenH * 0.95) {
+        d->hwnd = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+bool ExitBlackScreen()
+{
+    BlackScreenData data = {};
+    EnumWindows(FindBlackScreenProc, reinterpret_cast<LPARAM>(&data));
+
+    if (!data.hwnd) {
+        logger::Info(L"未找到黑屏窗口");
+        return false;
+    }
+
+    HWND hwnd = data.hwnd;
+
+    // 4 级递进
+    // 级别1：隐藏
+    ShowWindow(hwnd, SW_HIDE);
+    if (!IsWindowVisible(hwnd)) {
+        logger::Info(L"黑屏窗口已隐藏");
+        return true;
+    }
+
+    // 级别2：最小化
+    ShowWindow(hwnd, SW_MINIMIZE);
+    Sleep(100);
+    if (!IsWindowVisible(hwnd)) return true;
+
+    // 级别3：发送 ESC
+    PostMessage(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
+    PostMessage(hwnd, WM_KEYUP, VK_ESCAPE, 0);
+    Sleep(200);
+    if (!IsWindowVisible(hwnd)) return true;
+
+    // 级别4：发送 WM_CLOSE 关闭窗口（不杀进程）
+    PostMessage(hwnd, WM_CLOSE, 0, 0);
+    Sleep(200);
+    if (!IsWindowVisible(hwnd)) {
+        logger::Info(L"黑屏窗口已通过 WM_CLOSE 关闭");
+        return true;
+    }
+
+    logger::Warn(L"所有级别均未能退出黑屏窗口");
+    return false;
+}
+
+} // namespace pctl

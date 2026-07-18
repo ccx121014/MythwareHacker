@@ -1,0 +1,32 @@
+// app.rc - 资源文件
+#include <windows.h>
+
+// 应用清单（UAC 提权 + 可视化样式）
+1 24 "app.manifest"
+
+// 版本信息
+1 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"  // 简体中文 + Unicode
+        BEGIN
+            VALUE "CompanyName",      "MythwareHacker"
+            VALUE "FileDescription",  "极域黑客工具 - 集大成版"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "MythwareHacker"
+            VALUE "OriginalFilename", "MythwareHacker.exe"
+            VALUE "ProductName",      "极域黑客工具"
+            VALUE "ProductVersion",   "1.0.0.0"
+            VALUE "LegalCopyright",   "MIT License"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

@@ -1,0 +1,13 @@
+bin/obj_*/
+bin/*.o
+bin/*.obj
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+log/
+*.log
+.vs/
+.vscode/
