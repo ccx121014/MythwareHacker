@@ -1,14 +1,13 @@
 // inject_helper.cpp - 32位注入辅助程序
 //
 // 当64位主程序需要注入32位进程时，启动本程序完成跨位数注入。
-// 用法: inject_helper.exe <pid> <hwnd> <affinity>
+// 用法: inject_helper.exe <pid> <affinity>
 //   pid       目标进程ID
-//   hwnd      目标窗口句柄（十进制）
 //   affinity  WDA亲和值（0=WDA_NONE, 0x11=WDA_EXCLUDEFROMCAPTURE）
 //
 // 输出（stdout）:
-//   OK <exitCode>    成功
-//   FAIL <message>   失败
+//   OK <exitCode> <hwndCount>    成功
+//   FAIL <message>               失败
 //
 // 编译: i686-w64-mingw32-g++ -O2 -s -o inject_helper_x86.exe inject_helper.cpp -static
 #include <windows.h>
@@ -16,8 +15,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <vector>
 
-// 远程参数结构（必须与 hide_hook.cpp 中的 RemoteParams 一致）
 #pragma pack(push, 1)
 struct RemoteParams {
     HWND hwnd;
@@ -25,7 +24,19 @@ struct RemoteParams {
 };
 #pragma pack(pop)
 
-// 获取自身所在目录
+static DWORD g_targetPid = 0;
+static std::vector<HWND> g_hwndList;
+
+static BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam)
+{
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == g_targetPid && IsWindowVisible(hwnd)) {
+        g_hwndList.push_back(hwnd);
+    }
+    return TRUE;
+}
+
 static std::wstring GetSelfDir()
 {
     wchar_t path[MAX_PATH] = {};
@@ -35,98 +46,51 @@ static std::wstring GetSelfDir()
     return std::wstring(path);
 }
 
-int main(int argc, char* argv[])
+static DWORD InjectAndSetAffinity(HANDLE hProcess, HWND hwnd, DWORD affinity, const std::wstring& dllPath)
 {
-    if (argc < 4) {
-        printf("FAIL missing arguments\n");
-        return 1;
-    }
-
-    DWORD pid = (DWORD)atoi(argv[1]);
-    HWND hwnd = (HWND)(INT_PTR)atoi(argv[2]);
-    DWORD affinity = (DWORD)strtoul(argv[3], nullptr, 0);
-
-    if (pid == 0 || hwnd == nullptr) {
-        printf("FAIL invalid pid or hwnd\n");
-        return 1;
-    }
-
-    // 打开目标进程
-    HANDLE hProcess = OpenProcess(
-        PROCESS_QUERY_INFORMATION | PROCESS_CREATE_THREAD |
-        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
-        FALSE, pid);
-    if (!hProcess) {
-        printf("FAIL OpenProcess error=%lu\n", GetLastError());
-        return 1;
-    }
-
-    // 获取32位DLL路径
-    std::wstring dllPath = GetSelfDir() + L"MythwareHideHook_x86.dll";
-
-    // 第一步：在目标进程分配内存写入DLL路径
     size_t pathBytes = (dllPath.length() + 1) * sizeof(wchar_t);
     LPVOID pRemoteMem = VirtualAllocEx(hProcess, nullptr, pathBytes,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!pRemoteMem) {
-        printf("FAIL VirtualAllocEx error=%lu\n", GetLastError());
-        CloseHandle(hProcess);
-        return 1;
-    }
+    if (!pRemoteMem) return 100 + GetLastError();
 
     SIZE_T written = 0;
     WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathBytes, &written);
 
-    // 远程调用 LoadLibraryW
     HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
     auto pfnLoadLibrary = (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryW");
 
     HANDLE hThread = CreateRemoteThread(hProcess, nullptr, 0,
         pfnLoadLibrary, pRemoteMem, 0, nullptr);
     if (!hThread) {
-        printf("FAIL CreateRemoteThread(LoadLibrary) error=%lu\n", GetLastError());
         VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
-        CloseHandle(hProcess);
-        return 1;
+        return 200 + GetLastError();
     }
     WaitForSingleObject(hThread, 5000);
     CloseHandle(hThread);
     VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
 
-    // 第二步：本地加载DLL获取导出函数偏移
     HMODULE hLocalDll = LoadLibraryW(dllPath.c_str());
-    if (!hLocalDll) {
-        printf("FAIL LoadLibrary local error=%lu path=%ls\n", GetLastError(), dllPath.c_str());
-        CloseHandle(hProcess);
-        return 1;
-    }
+    if (!hLocalDll) return 300 + GetLastError();
 
     FARPROC pfnLocal = GetProcAddress(hLocalDll, "RemoteSetAffinity");
     if (!pfnLocal) {
-        printf("FAIL GetProcAddress RemoteSetAffinity\n");
         FreeLibrary(hLocalDll);
-        CloseHandle(hProcess);
-        return 1;
+        return 310;
     }
 
     DWORD_PTR offset = (DWORD_PTR)pfnLocal - (DWORD_PTR)hLocalDll;
 
-    // 第三步：在目标进程中找DLL基址
-    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, g_targetPid);
     if (hSnap == INVALID_HANDLE_VALUE) {
-        printf("FAIL CreateToolhelp32Snapshot error=%lu\n", GetLastError());
         FreeLibrary(hLocalDll);
-        CloseHandle(hProcess);
-        return 1;
+        return 400 + GetLastError();
     }
 
     DWORD_PTR remoteBase = 0;
     MODULEENTRY32W me;
     me.dwSize = sizeof(me);
 
-    // 匹配名：MythwareHideHook_x86（去掉路径和.dll）
     const wchar_t* matchName = L"MythwareHideHook_x86";
-
     if (Module32FirstW(hSnap, &me)) {
         do {
             std::wstring modName = me.szModule;
@@ -141,35 +105,27 @@ int main(int argc, char* argv[])
     CloseHandle(hSnap);
 
     if (remoteBase == 0) {
-        printf("FAIL DLL module not found in target\n");
         FreeLibrary(hLocalDll);
-        CloseHandle(hProcess);
-        return 1;
+        return 410;
     }
 
     DWORD_PTR remoteProc = remoteBase + offset;
 
-    // 第四步：分配参数内存并写入
     RemoteParams params = { hwnd, affinity };
     LPVOID pRemoteParams = VirtualAllocEx(hProcess, nullptr, sizeof(params),
                                           MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!pRemoteParams) {
-        printf("FAIL VirtualAllocEx(params) error=%lu\n", GetLastError());
         FreeLibrary(hLocalDll);
-        CloseHandle(hProcess);
-        return 1;
+        return 500 + GetLastError();
     }
     WriteProcessMemory(hProcess, pRemoteParams, &params, sizeof(params), &written);
 
-    // 第五步：远程调用 RemoteSetAffinity
     hThread = CreateRemoteThread(hProcess, nullptr, 0,
         (LPTHREAD_START_ROUTINE)remoteProc, pRemoteParams, 0, nullptr);
     if (!hThread) {
-        printf("FAIL CreateRemoteThread(func) error=%lu\n", GetLastError());
         VirtualFreeEx(hProcess, pRemoteParams, 0, MEM_RELEASE);
         FreeLibrary(hLocalDll);
-        CloseHandle(hProcess);
-        return 1;
+        return 600 + GetLastError();
     }
 
     WaitForSingleObject(hThread, 5000);
@@ -179,8 +135,56 @@ int main(int argc, char* argv[])
 
     VirtualFreeEx(hProcess, pRemoteParams, 0, MEM_RELEASE);
     FreeLibrary(hLocalDll);
+
+    return exitCode;
+}
+
+int main(int argc, char* argv[])
+{
+    if (argc < 3) {
+        printf("FAIL missing arguments\n");
+        return 1;
+    }
+
+    g_targetPid = (DWORD)atoi(argv[1]);
+    DWORD affinity = (DWORD)strtoul(argv[2], nullptr, 0);
+
+    if (g_targetPid == 0) {
+        printf("FAIL invalid pid\n");
+        return 1;
+    }
+
+    HANDLE hProcess = OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_CREATE_THREAD |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        FALSE, g_targetPid);
+    if (!hProcess) {
+        printf("FAIL OpenProcess error=%lu\n", GetLastError());
+        return 1;
+    }
+
+    std::wstring dllPath = GetSelfDir() + L"MythwareHideHook_x86.dll";
+
+    EnumWindows(EnumWindowsCallback, 0);
+
+    if (g_hwndList.empty()) {
+        printf("FAIL no windows found in target process\n");
+        CloseHandle(hProcess);
+        return 1;
+    }
+
+    DWORD totalCount = (DWORD)g_hwndList.size();
+    DWORD successCount = 0;
+    DWORD lastExitCode = 0;
+
+    for (size_t i = 0; i < g_hwndList.size(); i++) {
+        DWORD code = InjectAndSetAffinity(hProcess, g_hwndList[i], affinity, dllPath);
+        if (code == 0) successCount++;
+        lastExitCode = code;
+    }
+
     CloseHandle(hProcess);
 
-    printf("OK %lu\n", exitCode);
+    printf("OK %lu %lu\n", lastExitCode, successCount);
     return 0;
 }

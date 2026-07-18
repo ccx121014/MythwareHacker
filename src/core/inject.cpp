@@ -59,11 +59,12 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
         affinity = *(const DWORD*)params;
     }
 
-    // 构造命令行: inject_helper_x86.exe <pid> <hwnd> <affinity>
+    // 构造命令行: inject_helper_x86.exe <pid> <affinity>
+    // 注意：不再传递 hwnd，辅助程序会自行枚举目标进程的所有窗口
     std::wstring helperPath = GetSelfDir() + L"inject_helper_x86.exe";
     wchar_t cmdLine[1024];
-    swprintf(cmdLine, 1024, L"\"%ls\" %lu %lu 0x%lx",
-             helperPath.c_str(), pid, (DWORD)(INT_PTR)hwnd, affinity);
+    swprintf(cmdLine, 1024, L"\"%ls\" %lu 0x%lx",
+             helperPath.c_str(), pid, affinity);
 
     // 创建管道读取辅助程序输出
     SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
@@ -103,17 +104,19 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
     CloseHandle(pi.hProcess);
     CloseHandle(hReadPipe);
 
-    // 解析输出
+    // 解析输出: OK <exitCode> <successCount>
     if (strncmp(buf, "OK", 2) == 0) {
         DWORD exitCode = 0;
-        sscanf(buf, "OK %lu", &exitCode);
+        DWORD successCount = 0;
+        sscanf(buf, "OK %lu %lu", &exitCode, &successCount);
         result.success = true;
         result.exitCode = exitCode;
         if (exitCode != 0) {
             result.error = L"远程调用返回错误码: " + std::to_wstring(exitCode);
         }
         logger::Info(L"32位辅助程序注入成功 PID=" + std::to_wstring(pid) +
-                     L" 退出码=" + std::to_wstring(exitCode));
+                     L" 退出码=" + std::to_wstring(exitCode) +
+                     L" 成功窗口数=" + std::to_wstring(successCount));
     } else {
         std::wstring errStr;
         for (int i = 0; buf[i]; i++) errStr += (wchar_t)(unsigned char)buf[i];
