@@ -161,46 +161,44 @@ std::wstring ReadMythwarePassword()
 {
     // 1. 从注册表读取 Knock1 二进制值
     HKEY hKey = nullptr;
-    BYTE data[256] = {};
+    BYTE data[MAX_PATH * 2] = {};
     DWORD dataSize = sizeof(data);
 
-    // 先尝试 WOW6432Node（64位系统上32位注册表视图）
+    // 使用 KEY_WOW64_32KEY 标志访问32位注册表视图（匹配原版）
     LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-        L"SOFTWARE\\WOW6432Node\\TopDomain\\e-Learning Class\\Student",
-        0, KEY_READ, &hKey);
+        L"SOFTWARE\\TopDomain\\e-Learning Class\\Student",
+        0, KEY_READ | KEY_WOW64_32KEY, &hKey);
     if (r != ERROR_SUCCESS) {
-        // 回退到普通路径
+        // 回退到 WOW6432Node 路径
         r = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-            L"SOFTWARE\\TopDomain\\e-Learning Class\\Student",
+            L"SOFTWARE\\WOW6432Node\\TopDomain\\e-Learning Class\\Student",
             0, KEY_READ, &hKey);
     }
     if (r != ERROR_SUCCESS) return L"";
 
-    r = RegQueryValueExW(hKey, L"Knock1", nullptr, nullptr, data, &dataSize);
+    r = RegQueryValueExA(hKey, "knock1", nullptr, nullptr, data, &dataSize);
     RegCloseKey(hKey);
     if (r != ERROR_SUCCESS || dataSize < 4) return L"";
 
-    // 2. 解密：每4字节做 XOR
-    // MythwareToolkit 方式：PECL 模式
-    // retKeyVal[i+0] ^= ('P' ^ 'E')  = 0x50 ^ 0x45
-    // retKeyVal[i+1] ^= ('C' ^ 'L')  = 0x43 ^ 0x4c
-    // retKeyVal[i+2] ^= ('L' ^ 'C')  = 0x4c ^ 0x43
-    // retKeyVal[i+3] ^= ('E' ^ 'P')  = 0x45 ^ 0x50
+    // 2. 解密：每4字节做 XOR（PECL 模式，与原版完全一致）
     BYTE* buf = data;
-    for (DWORD i = 0; i + 3 < dataSize; i += 4) {
-        buf[i + 0] ^= (0x50 ^ 0x45);
-        buf[i + 1] ^= (0x43 ^ 0x4c);
-        buf[i + 2] ^= (0x4c ^ 0x43);
-        buf[i + 3] ^= (0x45 ^ 0x50);
+    for (int i = 0; i + 3 < (int)dataSize; i += 4) {
+        buf[i + 0] ^= (0x50 ^ 0x45);  // 'P' ^ 'E'
+        buf[i + 1] ^= (0x43 ^ 0x4c);  // 'C' ^ 'L'
+        buf[i + 2] ^= (0x4c ^ 0x43);  // 'L' ^ 'C'
+        buf[i + 3] ^= (0x45 ^ 0x50);  // 'E' ^ 'P'
     }
 
-    // 3. 提取密码字符串
-    // 解密后，取每4字节的第0字节拼成ASCII密码
-    // （数据是 UTF-16LE，但密码字符在低位字节）
+    // 3. 提取密码字符串（与原版 GetMythwarePasswordFromRegedit 完全一致）
+    // 逐字节扫描：如果下一个字节是0，则当前字节是密码字符
+    // 这样可以正确提取含字母+数字的混合密码（如 "abc123"）
+    // 注册表中的密码是 UTF-16LE 编码，每个字符占2字节（低字节+高字节0）
     std::wstring password;
-    for (DWORD i = 0; i + 3 < dataSize; i += 4) {
-        if (buf[i] == 0) break;
-        password += (wchar_t)buf[i];
+    for (int i = 0; i < (int)dataSize; i += 1) {
+        if (buf[i + 1] == 0) {
+            if (buf[i] == 0) break;
+            password += (wchar_t)buf[i];
+        }
     }
 
     return password;
