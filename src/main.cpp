@@ -100,31 +100,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         }
         return 0;
 
-    case WM_HOTKEY: {
-        switch (wParam) {
-        case ID_HOTKEY_HIDE:
-            whide::ToggleCurrent();
+    case WM_HOTKEY:
+        if (hotkey::Handle(wParam)) {
             tray::UpdateTip(hWnd);
-            break;
-        case ID_HOTKEY_SELECT:
-            // 进入选择模式
-            app::g_ctx.selectMode = true;
-            SetCursor(app::g_ctx.hCursorCross);
-            ShowWindow(hWnd, SW_HIDE);
-            break;
-        case ID_HOTKEY_PREVIEW:
-            preview::Toggle();
-            break;
-        case ID_HOTKEY_FLOAT:
-            floatw::Toggle();
-            break;
-        case ID_HOTKEY_KILL_MYTHWARE:
-            pctl::KillMythware();
-            tray::UpdateTip(hWnd);
-            break;
         }
         return 0;
-    }
 
     case WM_TITLEBAR_RIGHTCLICK:
         if (app::g_ctx.lastTitleBarHWnd && IsWindow(app::g_ctx.lastTitleBarHWnd)) {

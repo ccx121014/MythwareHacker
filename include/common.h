@@ -138,7 +138,8 @@ inline bool IsWin10Build19041OrLater()
 // ---------------------------------------------------------------------------
 #define APP_NAME                 L"MythwareHacker"
 #define APP_TITLE                L"极域黑客工具"
-#define APP_MUTEX_NAME           L"MythwareHacker_Mutex_v1"
+#define APP_VERSION              L"2.0.0"
+#define APP_MUTEX_NAME           L"MythwareHacker_Mutex_v2"
 #define APP_MAIN_CLASS           L"MythwareHackerMainClass"
 #define APP_PREVIEW_CLASS        L"MythwareHackerPreviewClass"
 #define APP_FLOAT_CLASS          L"MythwareHackerFloatClass"
@@ -146,13 +147,6 @@ inline bool IsWin10Build19041OrLater()
 #define WM_TRAYICON              (WM_USER + 1)
 #define WM_TITLEBAR_RIGHTCLICK   (WM_USER + 2)
 #define WM_FLOAT_CLICK           (WM_USER + 3)
-
-// 快捷键 ID
-#define ID_HOTKEY_HIDE           1
-#define ID_HOTKEY_SELECT         2
-#define ID_HOTKEY_PREVIEW        3
-#define ID_HOTKEY_FLOAT          4
-#define ID_HOTKEY_KILL_MYTHWARE  5
 
 // 托盘菜单命令 ID 段
 #define ID_TRAY_ICON             1000

@@ -23,6 +23,38 @@ static HFONT g_hFontBold = nullptr;
 static HFONT g_hFontLarge = nullptr;
 static HFONT g_hFontSmall = nullptr;
 static std::wstring g_logText;
+static HANDLE g_hTopmostThread = nullptr;
+static bool g_topmostRunning = false;
+
+// 轮询置顶线程（主窗口）
+static DWORD WINAPI TopmostThreadProc(LPVOID lpParameter)
+{
+    while (g_topmostRunning) {
+        if (g_hWnd && IsWindow(g_hWnd) && IsWindowVisible(g_hWnd)) {
+            SetWindowPos(g_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        Sleep(500);  // 主窗口用稍长间隔
+    }
+    return 0;
+}
+
+static void StartTopmostThread()
+{
+    if (g_hTopmostThread) return;
+    g_topmostRunning = true;
+    g_hTopmostThread = CreateThread(nullptr, 0, TopmostThreadProc, nullptr, 0, nullptr);
+}
+
+static void StopTopmostThread()
+{
+    g_topmostRunning = false;
+    if (g_hTopmostThread) {
+        WaitForSingleObject(g_hTopmostThread, 1000);
+        CloseHandle(g_hTopmostThread);
+        g_hTopmostThread = nullptr;
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 配色（参考 JiYuTrainer 蓝白渐变 + 状态色）
@@ -693,11 +725,13 @@ void Show()
         SetForegroundWindow(g_hWnd);
         RefreshStatus();
         RefreshWindowList();
+        StartTopmostThread();  // 启动轮询置顶
     }
 }
 
 void Hide()
 {
+    StopTopmostThread();  // 停止置顶
     if (g_hWnd) ShowWindow(g_hWnd, SW_HIDE);
 }
 

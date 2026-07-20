@@ -1,4 +1,4 @@
-// float_window.cpp - 圆形悬浮窗实现
+// float_window.cpp - 圆形悬浮窗实现（带轮询置顶）
 #include "ui/float_window.h"
 #include "ui/app_state.h"
 #include "ui/menu.h"
@@ -11,19 +11,32 @@ namespace floatw {
 static const int FLOAT_SIZE = 48;  // 圆窗直径
 static bool g_dragging = false;
 static POINT g_dragStart = {};
+static HANDLE g_hTopmostThread = nullptr;
+static bool g_topmostRunning = false;
+
+// 轮询置顶线程（参考 MythwareToolkit）
+static DWORD WINAPI TopmostThreadProc(LPVOID lpParameter)
+{
+    while (g_topmostRunning) {
+        HWND hWnd = app::g_ctx.hWndFloat;
+        if (hWnd && IsWindow(hWnd) && IsWindowVisible(hWnd)) {
+            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        Sleep(250);  // 短间隔维持置顶
+    }
+    return 0;
+}
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
     case WM_CREATE: {
         // 启用分层窗口（圆形 + 半透明）
-        // 实际圆形通过 region 实现
         HRGN hRgn = CreateEllipticRgn(0, 0, FLOAT_SIZE, FLOAT_SIZE);
         SetWindowRgn(hWnd, hRgn, TRUE);
-        // 设置分层透明度
         SetWindowLong(hWnd, GWL_EXSTYLE,
                       GetWindowLong(hWnd, GWL_EXSTYLE) | WS_EX_LAYERED);
-        // 透明度 220（0-255）
         typedef BOOL (WINAPI *SetLayeredWindowAttributes_t)(HWND, COLORREF, BYTE, DWORD);
         HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
         auto pfn = (SetLayeredWindowAttributes_t)GetProcAddress(hUser32, "SetLayeredWindowAttributes");
@@ -32,8 +45,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     }
 
     case WM_LBUTTONDOWN: {
-        // 左键：弹出主菜单（切换主面板）
-        // 同时支持拖拽
         g_dragging = true;
         g_dragStart = { LOWORD(lParam), HIWORD(lParam) };
         SetCapture(hWnd);
@@ -58,7 +69,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         bool wasDragging = g_dragging;
         g_dragging = false;
         ReleaseCapture();
-        // 如果几乎没移动，视为点击
         POINT now;
         GetCursorPos(&now);
         RECT rc;
@@ -66,20 +76,17 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         int dx = abs(now.x - rc.left - g_dragStart.x);
         int dy = abs(now.y - rc.top - g_dragStart.y);
         if (dx < 5 && dy < 5) {
-            // 点击：弹出托盘菜单
             menu::ShowTrayMenu(app::g_ctx.hWndMain);
         }
         return 0;
     }
 
     case WM_MBUTTONDOWN: {
-        // 中键：一键广播窗口化
         pctl::BroadcastToWindowed();
         return 0;
     }
 
     case WM_RBUTTONUP: {
-        // 右键：快捷菜单
         menu::ShowTrayMenu(app::g_ctx.hWndMain);
         return 0;
     }
@@ -88,14 +95,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         PAINTSTRUCT ps;
         HDC hDC = BeginPaint(hWnd, &ps);
 
-        // 画圆形背景（盾牌色：深蓝渐变简化为纯色）
         RECT rc;
         GetClientRect(hWnd, &rc);
         HBRUSH hBrush = CreateSolidBrush(RGB(0, 120, 215));
         FillRect(hDC, &rc, hBrush);
         DeleteObject(hBrush);
 
-        // 画 "M" 字母（MythwareHacker）
         SetBkMode(hDC, TRANSPARENT);
         SetTextColor(hDC, RGB(255, 255, 255));
         HFONT hFont = CreateFontW(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
@@ -113,7 +118,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     }
 
     case WM_ERASEBKGND:
-        return 1;  // 防止闪烁
+        return 1;
 
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
@@ -132,14 +137,31 @@ ATOM RegisterClass(HINSTANCE hInst)
     return RegisterClassExW(&wc);
 }
 
+static void StartTopmostThread()
+{
+    if (g_hTopmostThread) return;
+    g_topmostRunning = true;
+    g_hTopmostThread = CreateThread(nullptr, 0, TopmostThreadProc, nullptr, 0, nullptr);
+}
+
+static void StopTopmostThread()
+{
+    g_topmostRunning = false;
+    if (g_hTopmostThread) {
+        WaitForSingleObject(g_hTopmostThread, 1000);
+        CloseHandle(g_hTopmostThread);
+        g_hTopmostThread = nullptr;
+    }
+}
+
 void Show()
 {
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         ShowWindow(app::g_ctx.hWndFloat, SW_SHOWNORMAL);
+        StartTopmostThread();
         return;
     }
 
-    // 默认位置：屏幕右上角
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int x = screenW - FLOAT_SIZE - 20;
     int y = 20;
@@ -155,12 +177,14 @@ void Show()
     if (app::g_ctx.hWndFloat) {
         ShowWindow(app::g_ctx.hWndFloat, SW_SHOWNORMAL);
         UpdateWindow(app::g_ctx.hWndFloat);
-        logger::Info(L"悬浮窗已显示");
+        StartTopmostThread();
+        logger::Info(L"悬浮窗已显示（轮询置顶）");
     }
 }
 
 void Hide()
 {
+    StopTopmostThread();
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         ShowWindow(app::g_ctx.hWndFloat, SW_HIDE);
     }
@@ -182,6 +206,7 @@ bool IsVisible()
 
 void Cleanup()
 {
+    StopTopmostThread();
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         DestroyWindow(app::g_ctx.hWndFloat);
         app::g_ctx.hWndFloat = nullptr;
