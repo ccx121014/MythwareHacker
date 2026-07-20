@@ -182,8 +182,11 @@ bool Restore(HWND hwnd)
     // 注入恢复（affinity=0）
     struct RemoteParams { HWND hwnd; DWORD affinity; };
     RemoteParams params = { hwnd, WDA_NONE };
-    inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
+    auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
                           &params, sizeof(params));
+    if (!r.success) {
+        logger::Warn(L"恢复WDA注入失败: " + r.error);
+    }
 
     auto pfnCloak = GetDwmSetWindowAttribute();
     if (pfnCloak) {

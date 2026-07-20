@@ -39,22 +39,31 @@ static std::wstring GetMythwarePath()
 
     // 常见注册表位置
     const wchar_t* keys[] = {
+        L"SOFTWARE\\TopDomain\\e-Learning Class Standard\\1.00",
         L"SOFTWARE\\TopDomain\\e-learning Class Standard",
-        L"SOFTWARE\\WOW6432Node\\TopDomain\\e-learning Class Standard",
         L"SOFTWARE\\TopDomain\\极域电子教室",
         nullptr
     };
 
     for (int i = 0; keys[i]; i++) {
-        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, keys[i], 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-            if (RegQueryValueExW(hKey, L"Path", nullptr, nullptr, (LPBYTE)path, &size) == ERROR_SUCCESS) {
-                RegCloseKey(hKey);
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, keys[i], 0, KEY_READ | KEY_WOW64_32KEY, &hKey) == ERROR_SUCCESS) {
+            // 尝试 "TargetDirectory"（原版 MythwareToolkit 使用的值名）
+            // 和 "Path"（常见值名）
+            bool found = false;
+            for (const wchar_t* valName : { L"TargetDirectory", L"Path" }) {
+                size = sizeof(path);
+                if (RegQueryValueExW(hKey, valName, nullptr, nullptr, (LPBYTE)path, &size) == ERROR_SUCCESS) {
+                    found = true;
+                    break;
+                }
+            }
+            RegCloseKey(hKey);
+            if (found) {
                 std::wstring p(path);
                 if (!p.empty() && p.back() != L'\\') p += L'\\';
                 p += STUDENT_MAIN;
                 return p;
             }
-            RegCloseKey(hKey);
         }
     }
     return L"";

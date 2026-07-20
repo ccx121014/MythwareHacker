@@ -79,7 +79,7 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = hWritePipe;
     si.hStdError = hWritePipe;
-    si.hStdInput = nullptr;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION pi = {};
 
     std::wstring cmd(cmdLine);

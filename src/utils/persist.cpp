@@ -70,6 +70,7 @@ int LoadAndRestore()
 
         DWORD nameLen = 0;
         if (!ReadFile(hFile, &nameLen, sizeof(nameLen), &read, nullptr)) break;
+        if (nameLen > 4096) break;  // 先检查再分配
         std::wstring processName;
         if (nameLen > 0) {
             processName.resize(nameLen / sizeof(wchar_t));
@@ -78,10 +79,7 @@ int LoadAndRestore()
 
         DWORD titleLen = 0;
         if (!ReadFile(hFile, &titleLen, sizeof(titleLen), &read, nullptr)) break;
-        if (nameLen > 4096 || titleLen > 4096) {
-            CloseHandle(hFile);
-            return 0;
-        }
+        if (titleLen > 4096) break;  // 先检查再分配
         std::wstring title;
         if (titleLen > 0) {
             title.resize(titleLen / sizeof(wchar_t));
