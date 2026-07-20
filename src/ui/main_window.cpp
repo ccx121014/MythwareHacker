@@ -1,4 +1,4 @@
-// main_window.cpp - 图形界面主窗口实现
+// main_window.cpp - 图形界面主窗口实现（美化版）
 #include "ui/main_window.h"
 #include "ui/tray.h"
 #include "ui/float_window.h"
@@ -19,7 +19,160 @@ static HWND g_hList   = nullptr;
 static HWND g_hStatus = nullptr;
 static HWND g_hLog    = nullptr;
 static HFONT g_hFont  = nullptr;
+static HFONT g_hFontBold = nullptr;
 static std::wstring g_logText;
+
+// ---------------------------------------------------------------------------
+// 颜色主题
+// ---------------------------------------------------------------------------
+#define C_BG        RGB(245, 247, 250)   // 窗口背景
+#define C_BG_PANEL  RGB(255, 255, 255)   // 面板背景（白色）
+#define C_TEXT      RGB(33, 37, 41)      // 主文字
+#define C_TEXT_DIM  RGB(108, 117, 125)   // 次要文字
+#define C_BORDER    RGB(222, 226, 230)   // 边框色
+
+#define C_RED       RGB(220, 53, 69)     // 危险操作
+#define C_RED_P     RGB(200, 35, 51)
+#define C_GREEN     RGB(40, 167, 69)     // 恢复/安全
+#define C_GREEN_P   RGB(33, 136, 56)
+#define C_BLUE      RGB(0, 123, 255)     // 普通操作
+#define C_BLUE_P    RGB(0, 105, 217)
+#define C_ORANGE    RGB(253, 126, 20)    // 警告/解除限制
+#define C_ORANGE_P  RGB(232, 112, 6)
+#define C_PURPLE    RGB(111, 66, 192)    // 密码相关
+#define C_PURPLE_P  RGB(96, 52, 175)
+#define C_GRAY      RGB(108, 117, 125)   // 中性
+#define C_GRAY_P    RGB(84, 91, 98)
+
+struct BtnTheme {
+    COLORREF bg;
+    COLORREF bgPressed;
+    COLORREF text;
+};
+
+static const BtnTheme THEME_RED    = { C_RED,    C_RED_P,    RGB(255,255,255) };
+static const BtnTheme THEME_GREEN  = { C_GREEN,  C_GREEN_P,  RGB(255,255,255) };
+static const BtnTheme THEME_BLUE   = { C_BLUE,   C_BLUE_P,   RGB(255,255,255) };
+static const BtnTheme THEME_ORANGE = { C_ORANGE, C_ORANGE_P, RGB(255,255,255) };
+static const BtnTheme THEME_PURPLE = { C_PURPLE, C_PURPLE_P, RGB(255,255,255) };
+static const BtnTheme THEME_GRAY   = { C_GRAY,   C_GRAY_P,   RGB(255,255,255) };
+
+static const BtnTheme* GetTheme(int id)
+{
+    switch (id) {
+    case IDC_BTN_KILL_MYTH:
+    case IDC_BTN_KILL_CLASSROOM:
+        return &THEME_RED;
+    case IDC_BTN_RESTORE_SEL:
+    case IDC_BTN_RESTORE_ALL:
+    case IDC_BTN_RESUME:
+    case IDC_BTN_RESTORE_SYS:
+    case IDC_BTN_RESTART_EXPLORER:
+        return &THEME_GREEN;
+    case IDC_BTN_HIDE_CURRENT:
+    case IDC_BTN_SELECT_MODE:
+    case IDC_BTN_PREVIEW:
+    case IDC_BTN_FLOAT:
+    case IDC_BTN_SUSPEND:
+    case IDC_BTN_START_MYTH:
+    case IDC_BTN_BROADCAST_WIN:
+    case IDC_BTN_BROADCAST_FULL:
+    case IDC_BTN_EXIT_BLACK:
+    case IDC_BTN_REFRESH:
+        return &THEME_BLUE;
+    case IDC_BTN_UNBLOCK_NET:
+    case IDC_BTN_UNBLOCK_USB:
+    case IDC_BTN_UNBLOCK_ALL:
+    case IDC_BTN_UNBLOCK_KEYBD:
+        return &THEME_ORANGE;
+    case IDC_BTN_CALC_PASSWORD:
+    case IDC_BTN_READ_MYTH_PWD:
+        return &THEME_PURPLE;
+    default:
+        return &THEME_GRAY;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 绘制辅助：超采样抗锯齿圆角（3x 渲染 → HALFTONE 缩放，纯 GDI 无依赖）
+// ---------------------------------------------------------------------------
+
+// 在目标 DC 上绘制抗锯齿圆角填充（radius=半圆最圆润）
+static void FillRoundedRectAA(HDC hdc, int x, int y, int w, int h, COLORREF bg)
+{
+    if (w <= 0 || h <= 0) return;
+    int radius = (h < w) ? h / 2 : w / 2;
+
+    const int SS = 3;                       // 超采样倍数
+    int sw = w * SS, sh = h * SS;
+
+    HDC memDC = CreateCompatibleDC(hdc);
+    HBITMAP memBmp = CreateCompatibleBitmap(hdc, sw, sh);
+    HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, memBmp);
+
+    // 用窗口背景色填充（圆角外区域将以此色与目标混合，实现平滑过渡）
+    RECT fullRc = { 0, 0, sw, sh };
+    HBRUSH hBgBrush = CreateSolidBrush(C_BG);
+    FillRect(memDC, &fullRc, hBgBrush);
+    DeleteObject(hBgBrush);
+
+    // 绘制 3 倍大小的圆角矩形
+    HBRUSH hBrush = CreateSolidBrush(bg);
+    HGDIOBJ oldBrush = SelectObject(memDC, hBrush);
+    HGDIOBJ oldPen = SelectObject(memDC, GetStockObject(NULL_PEN));
+    RoundRect(memDC, 0, 0, sw, sh, radius * SS * 2, radius * SS * 2);
+    SelectObject(memDC, oldPen);
+    SelectObject(memDC, oldBrush);
+    DeleteObject(hBrush);
+
+    // HALFTONE 缩放回原尺寸，获得抗锯齿边缘
+    int oldMode = SetStretchBltMode(hdc, HALFTONE);
+    SetBrushOrgEx(hdc, 0, 0, nullptr);
+    StretchBlt(hdc, x, y, w, h, memDC, 0, 0, sw, sh, SRCCOPY);
+    SetStretchBltMode(hdc, oldMode);
+
+    SelectObject(memDC, oldBmp);
+    DeleteObject(memBmp);
+    DeleteDC(memDC);
+}
+
+static void DrawThemedButton(HDC hdc, RECT* rc, const wchar_t* text, UINT state, const BtnTheme* theme)
+{
+    COLORREF bgCR = (state & ODS_SELECTED) ? theme->bgPressed : theme->bg;
+    if (state & ODS_DISABLED) bgCR = RGB(200, 200, 200);
+
+    int x = rc->left, y = rc->top;
+    int w = rc->right - rc->left, h = rc->bottom - rc->top;
+    if (state & ODS_SELECTED) { x += 1; y += 1; w -= 2; h -= 2; }
+
+    // 抗锯齿半圆角填充
+    FillRoundedRectAA(hdc, x, y, w, h, bgCR);
+
+    // GDI 绘制文字（保持原有字体）
+    SetTextColor(hdc, (state & ODS_DISABLED) ? RGB(120,120,120) : theme->text);
+    SetBkMode(hdc, TRANSPARENT);
+    RECT textRc = { x, y, x + w, y + h };
+    HFONT hOldFont = (HFONT)SelectObject(hdc, g_hFont);
+    DrawTextW(hdc, text, -1, &textRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    SelectObject(hdc, hOldFont);
+}
+
+// ---------------------------------------------------------------------------
+// 布局常量
+// ---------------------------------------------------------------------------
+static const int MARGIN = 15;
+static const int GAP = 12;
+static const int COL_W = 326;
+static const int BTN_H = 32;
+static const int BTN_GAP = 6;
+
+static const int WIN_W = 1040;
+static const int WIN_H = 720;
+
+// 列起始 X 坐标
+#define COL1_X  MARGIN
+#define COL2_X  (MARGIN + COL_W + GAP)
+#define COL3_X  (MARGIN + COL_W*2 + GAP*2)
 
 // ---------------------------------------------------------------------------
 // 辅助：创建控件
@@ -27,18 +180,21 @@ static std::wstring g_logText;
 static HWND MkBtn(HWND parent, const wchar_t* text, int id, int x, int y, int w, int h)
 {
     HWND btn = CreateWindowExW(0, L"BUTTON", text,
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
         x, y, w, h, parent, (HMENU)(INT_PTR)id, app::g_ctx.hInst, nullptr);
     if (g_hFont) SendMessageW(btn, WM_SETFONT, (WPARAM)g_hFont, TRUE);
     return btn;
 }
 
-static HWND MkLabel(HWND parent, const wchar_t* text, int x, int y, int w, int h)
+static HWND MkLabel(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool bold = false)
 {
     HWND lbl = CreateWindowExW(0, L"STATIC", text,
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         x, y, w, h, parent, nullptr, app::g_ctx.hInst, nullptr);
-    if (g_hFont) SendMessageW(lbl, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+    if (bold && g_hFontBold)
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)g_hFontBold, TRUE);
+    else if (g_hFont)
+        SendMessageW(lbl, WM_SETFONT, (WPARAM)g_hFont, TRUE);
     return lbl;
 }
 
@@ -55,7 +211,7 @@ static HWND MkGroup(HWND parent, const wchar_t* text, int x, int y, int w, int h
     HWND grp = CreateWindowExW(0, L"BUTTON", text,
         WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
         x, y, w, h, parent, nullptr, app::g_ctx.hInst, nullptr);
-    if (g_hFont) SendMessageW(grp, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+    if (g_hFontBold) SendMessageW(grp, WM_SETFONT, (WPARAM)g_hFontBold, TRUE);
     return grp;
 }
 
@@ -103,7 +259,6 @@ static void DoCalcPassword(HWND hWnd)
     std::wstring verStr = ver;
     if (verStr.empty()) verStr = L"11.06";
 
-    // 同时显示4套算法结果（匹配原版 MythwareToolkit 的行为）
     auto all = pwcalc::CalculateAll(year, month, day, cn);
     std::wstring result = L"日期: " + WSTR(year) + L"-" +
                           WSTR(month) + L"-" + WSTR(day) +
@@ -113,7 +268,6 @@ static void DoCalcPassword(HWND hWnd)
                           L"11.0x:      " + all.v11ToV1106 + L"\r\n" +
                           L"11.06~12.0: " + all.v1106ToV12 + L"\r\n";
 
-    // 根据输入版本号高亮对应结果
     std::wstring pwd = pwcalc::CalculateAuto(verStr, year, month, day, cn);
     result += L"\r\n当前版本 " + verStr + L" → " + pwd;
 
@@ -150,90 +304,173 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     switch (message) {
 
     case WM_CREATE: {
-        g_hFont = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        // 字体：常规 + 粗体
+        g_hFont = CreateFontW(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
+        g_hFontBold = CreateFontW(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
 
-        // 顶部状态栏
-        g_hStatus = MkLabel(hWnd, L"极域状态: 检测中...", 10, 5, 680, 22);
-        MkBtn(hWnd, L"刷新", IDC_BTN_REFRESH, 700, 3, 80, 24);
+        // ===== 顶部状态栏 =====
+        g_hStatus = MkLabel(hWnd, L"极域状态: 检测中...", COL1_X, 10, 900, 26, true);
+        MkBtn(hWnd, L"刷新", IDC_BTN_REFRESH, WIN_W - MARGIN - 80, 8, 80, 28);
 
-        // ===== 左侧 =====
-
+        // ===== 左列 =====
         // 窗口隐蔽
-        MkGroup(hWnd, L"窗口隐蔽", 10, 30, 390, 225);
+        MkGroup(hWnd, L"窗口隐蔽", COL1_X, 46, COL_W, 310);
         g_hList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
-            20, 52, 370, 120, hWnd, (HMENU)IDC_LIST_HIDDEN, app::g_ctx.hInst, nullptr);
+            COL1_X + 10, 72, COL_W - 20, 200, hWnd,
+            (HMENU)IDC_LIST_HIDDEN, app::g_ctx.hInst, nullptr);
         if (g_hFont) SendMessageW(g_hList, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
-        MkBtn(hWnd, L"隐藏当前", IDC_BTN_HIDE_CURRENT, 20, 178, 120, 28);
-        MkBtn(hWnd, L"恢复选中", IDC_BTN_RESTORE_SEL, 145, 178, 120, 28);
-        MkBtn(hWnd, L"恢复全部", IDC_BTN_RESTORE_ALL, 270, 178, 120, 28);
-        MkBtn(hWnd, L"选择模式", IDC_BTN_SELECT_MODE, 20, 210, 120, 28);
-        MkBtn(hWnd, L"截图预览", IDC_BTN_PREVIEW, 145, 210, 120, 28);
-        MkBtn(hWnd, L"悬浮窗",   IDC_BTN_FLOAT, 270, 210, 120, 28);
+        {
+            int bx = COL1_X + 10;
+            int by = 280;
+            int bw = 100;
+            MkBtn(hWnd, L"隐藏当前", IDC_BTN_HIDE_CURRENT, bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"恢复选中", IDC_BTN_RESTORE_SEL, bx + bw + BTN_GAP, by, bw, BTN_H);
+            MkBtn(hWnd, L"恢复全部", IDC_BTN_RESTORE_ALL, bx + (bw + BTN_GAP)*2, by, bw, BTN_H);
+            by += BTN_H + BTN_GAP;
+            MkBtn(hWnd, L"选择模式", IDC_BTN_SELECT_MODE, bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"截图预览", IDC_BTN_PREVIEW, bx + bw + BTN_GAP, by, bw, BTN_H);
+            MkBtn(hWnd, L"悬浮窗",   IDC_BTN_FLOAT, bx + (bw + BTN_GAP)*2, by, bw, BTN_H);
+        }
 
         // 系统操作
-        MkGroup(hWnd, L"系统操作", 10, 265, 390, 70);
-        MkBtn(hWnd, L"杀机房助手",   IDC_BTN_KILL_CLASSROOM, 20, 288, 120, 28);
-        MkBtn(hWnd, L"解禁系统程序", IDC_BTN_RESTORE_SYS, 145, 288, 120, 28);
-        MkBtn(hWnd, L"重启资源管理器",IDC_BTN_RESTART_EXPLORER, 270, 288, 120, 28);
+        MkGroup(hWnd, L"系统操作", COL1_X, 370, COL_W, 108);
+        {
+            int bx = COL1_X + 10;
+            int by = 396;
+            int bw = 100;
+            MkBtn(hWnd, L"杀机房助手",   IDC_BTN_KILL_CLASSROOM, bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"解禁系统程序", IDC_BTN_RESTORE_SYS, bx + bw + BTN_GAP, by, bw, BTN_H);
+            MkBtn(hWnd, L"重启资源管理器",IDC_BTN_RESTART_EXPLORER, bx + (bw + BTN_GAP)*2, by, bw, BTN_H);
+        }
 
-        // ===== 右侧 =====
-
+        // ===== 中列 =====
         // 极域控制
-        MkGroup(hWnd, L"极域控制", 410, 30, 420, 170);
-        MkBtn(hWnd, L"强杀极域",   IDC_BTN_KILL_MYTH,      420, 52, 130, 28);
-        MkBtn(hWnd, L"挂起极域",   IDC_BTN_SUSPEND,        555, 52, 130, 28);
-        MkBtn(hWnd, L"恢复极域",   IDC_BTN_RESUME,         690, 52, 130, 28);
-        MkBtn(hWnd, L"启动极域",   IDC_BTN_START_MYTH,     420, 84, 130, 28);
-        MkBtn(hWnd, L"广播窗口化", IDC_BTN_BROADCAST_WIN,  555, 84, 130, 28);
-        MkBtn(hWnd, L"广播全屏化", IDC_BTN_BROADCAST_FULL, 690, 84, 130, 28);
-        MkBtn(hWnd, L"退出黑屏",   IDC_BTN_EXIT_BLACK,     420, 116, 130, 28);
+        MkGroup(hWnd, L"极域控制", COL2_X, 46, COL_W, 260);
+        {
+            int bx = COL2_X + 10;
+            int by = 72;
+            int bw = 100;
+            MkBtn(hWnd, L"强杀极域",   IDC_BTN_KILL_MYTH,      bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"挂起极域",   IDC_BTN_SUSPEND,        bx + bw + BTN_GAP, by, bw, BTN_H);
+            MkBtn(hWnd, L"恢复极域",   IDC_BTN_RESUME,         bx + (bw + BTN_GAP)*2, by, bw, BTN_H);
+            by += BTN_H + 10;
+            MkBtn(hWnd, L"启动极域",   IDC_BTN_START_MYTH,     bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"广播窗口化", IDC_BTN_BROADCAST_WIN,  bx + bw + BTN_GAP, by, bw, BTN_H);
+            MkBtn(hWnd, L"广播全屏化", IDC_BTN_BROADCAST_FULL, bx + (bw + BTN_GAP)*2, by, bw, BTN_H);
+            by += BTN_H + 10;
+            MkBtn(hWnd, L"退出黑屏",   IDC_BTN_EXIT_BLACK,     bx, by, bw, BTN_H);
+        }
 
         // 限制解除
-        MkGroup(hWnd, L"限制解除", 410, 210, 420, 90);
-        MkBtn(hWnd, L"解除网络限制",   IDC_BTN_UNBLOCK_NET, 420, 233, 130, 28);
-        MkBtn(hWnd, L"解除U盘限制",    IDC_BTN_UNBLOCK_USB, 555, 233, 130, 28);
-        MkBtn(hWnd, L"一键解除全部",   IDC_BTN_UNBLOCK_ALL, 690, 233, 130, 28);
-        MkBtn(hWnd, L"解除键盘锁",     IDC_BTN_UNBLOCK_KEYBD, 420, 265, 130, 28);
-
-        // 密码计算器
-        MkGroup(hWnd, L"动态密码计算器", 410, 310, 420, 175);
-        MkLabel(hWnd, L"版本号:",   420, 334, 55, 20);
-        MkEdit(hWnd, L"11.06", IDC_EDIT_VERSION, 480, 332, 155, 22);
-        MkLabel(hWnd, L"日期:",     420, 362, 55, 20);
+        MkGroup(hWnd, L"限制解除", COL2_X, 318, COL_W, 160);
         {
-            SYSTEMTIME st; GetLocalTime(&st);
-            wchar_t dateBuf[32];
-            swprintf(dateBuf, 32, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
-            MkEdit(hWnd, dateBuf, IDC_EDIT_DATE, 480, 360, 155, 22);
+            int bx = COL2_X + 10;
+            int by = 344;
+            int bw = 153;
+            MkBtn(hWnd, L"解除网络限制", IDC_BTN_UNBLOCK_NET,   bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"解除U盘限制",  IDC_BTN_UNBLOCK_USB,   bx + bw + BTN_GAP, by, bw, BTN_H);
+            by += BTN_H + BTN_GAP;
+            MkBtn(hWnd, L"一键解除全部", IDC_BTN_UNBLOCK_ALL,   bx, by, bw, BTN_H);
+            MkBtn(hWnd, L"解除键盘锁",   IDC_BTN_UNBLOCK_KEYBD, bx + bw + BTN_GAP, by, bw, BTN_H);
         }
-        MkLabel(hWnd, L"计算机名:", 420, 390, 55, 20);
-        MkEdit(hWnd, pwcalc::GetLocalComputerName().c_str(), IDC_EDIT_PCNAME, 480, 388, 155, 22);
-        MkBtn(hWnd, L"计算密码", IDC_BTN_CALC_PASSWORD, 645, 386, 175, 28);
-        MkBtn(hWnd, L"读取极域密码", IDC_BTN_READ_MYTH_PWD, 645, 416, 175, 28);
-        MkLabel(hWnd, L"计算结果:", 420, 425, 70, 20);
-        MkEdit(hWnd, L"", IDC_EDIT_RESULT, 420, 445, 395, 35,
-               WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL);
 
-        // 操作日志
-        MkGroup(hWnd, L"操作日志", 10, 495, 820, 90);
+        // ===== 右列 =====
+        // 密码计算器
+        MkGroup(hWnd, L"动态密码计算器", COL3_X, 46, COL_W, 432);
+        {
+            int bx = COL3_X + 10;
+            int by = 72;
+            int lw = 65;   // 标签宽
+            int ew = COL_W - lw - 24; // 输入框宽
+            int lx = bx;
+            int ex = bx + lw;
+
+            MkLabel(hWnd, L"版本号:", lx, by + 3, lw, 22);
+            MkEdit(hWnd, L"11.06", IDC_EDIT_VERSION, ex, by, ew, 26);
+            by += 34;
+
+            MkLabel(hWnd, L"日期:", lx, by + 3, lw, 22);
+            {
+                SYSTEMTIME st; GetLocalTime(&st);
+                wchar_t dateBuf[32];
+                swprintf(dateBuf, 32, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+                MkEdit(hWnd, dateBuf, IDC_EDIT_DATE, ex, by, ew, 26);
+            }
+            by += 34;
+
+            MkLabel(hWnd, L"计算机名:", lx, by + 3, lw, 22);
+            MkEdit(hWnd, pwcalc::GetLocalComputerName().c_str(), IDC_EDIT_PCNAME, ex, by, ew, 26);
+            by += 40;
+
+            int bw2 = (COL_W - 24) / 2 - BTN_GAP/2;
+            MkBtn(hWnd, L"计算密码", IDC_BTN_CALC_PASSWORD, bx, by, bw2, BTN_H);
+            MkBtn(hWnd, L"读取极域密码", IDC_BTN_READ_MYTH_PWD, bx + bw2 + BTN_GAP, by, bw2, BTN_H);
+            by += BTN_H + 14;
+
+            MkLabel(hWnd, L"计算结果:", lx, by, lw + 50, 22);
+            by += 22;
+            MkEdit(hWnd, L"", IDC_EDIT_RESULT, bx, by, COL_W - 20, 200,
+                   WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL);
+        }
+
+        // ===== 底部操作日志 =====
+        MkGroup(hWnd, L"操作日志", COL1_X, 490, WIN_W - MARGIN*2, 172);
         g_hLog = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL |
             ES_READONLY | WS_VSCROLL,
-            20, 517, 800, 55, hWnd, (HMENU)IDC_EDIT_LOG, app::g_ctx.hInst, nullptr);
+            COL1_X + 10, 516, WIN_W - MARGIN*2 - 20, 136,
+            hWnd, (HMENU)IDC_EDIT_LOG, app::g_ctx.hInst, nullptr);
         if (g_hFont) SendMessageW(g_hLog, WM_SETFONT, (WPARAM)g_hFont, TRUE);
 
         // 定时刷新
         SetTimer(hWnd, IDC_GUI_TIMER, 3000, nullptr);
 
-        // 初始化
         RefreshStatus();
         RefreshWindowList();
         AppendLog(L"图形界面已启动");
         return 0;
+    }
+
+    case WM_ERASEBKGND: {
+        RECT rc;
+        GetClientRect(hWnd, &rc);
+        HBRUSH hBrush = CreateSolidBrush(C_BG);
+        FillRect((HDC)wParam, &rc, hBrush);
+        DeleteObject(hBrush);
+        return TRUE;
+    }
+
+    case WM_DRAWITEM: {
+        LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lParam;
+        if (dis->CtlType != ODT_BUTTON) break;
+        wchar_t text[128] = {};
+        GetWindowTextW(dis->hwndItem, text, 128);
+        const BtnTheme* theme = GetTheme(dis->CtlID);
+        DrawThemedButton(dis->hDC, &dis->rcItem, text, dis->itemState, theme);
+        return TRUE;
+    }
+
+    case WM_CTLCOLORSTATIC: {
+        HDC hdc = (HDC)wParam;
+        SetTextColor(hdc, C_TEXT);
+        SetBkMode(hdc, TRANSPARENT);
+        return (LRESULT)GetStockObject(NULL_BRUSH);
+    }
+
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX: {
+        HDC hdc = (HDC)wParam;
+        SetBkColor(hdc, RGB(255, 255, 255));
+        SetTextColor(hdc, C_TEXT);
+        static HBRUSH hEditBrush = nullptr;
+        if (!hEditBrush) hEditBrush = CreateSolidBrush(RGB(255, 255, 255));
+        return (LRESULT)hEditBrush;
     }
 
     case WM_TIMER:
@@ -358,20 +595,20 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     }
 
     case WM_CLOSE:
-        // 隐藏到托盘，不退出
         ShowWindow(hWnd, SW_HIDE);
         return 0;
 
     case WM_DESTROY:
         KillTimer(hWnd, IDC_GUI_TIMER);
         if (g_hFont) { DeleteObject(g_hFont); g_hFont = nullptr; }
+        if (g_hFontBold) { DeleteObject(g_hFontBold); g_hFontBold = nullptr; }
         g_hWnd = nullptr;
         return 0;
 
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lParam);
-        mmi->ptMinTrackSize.x = 860;
-        mmi->ptMinTrackSize.y = 640;
+        mmi->ptMinTrackSize.x = WIN_W;
+        mmi->ptMinTrackSize.y = WIN_H;
         return 0;
     }
 
@@ -401,11 +638,11 @@ bool RegisterClass(HINSTANCE hInst)
 HWND Create(HINSTANCE hInst)
 {
     g_hWnd = CreateWindowExW(
-        0,
+        WS_EX_COMPOSITED,
         APP_GUI_CLASS,
         APP_TITLE L" - 集大成版",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 860, 640,
+        WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME,
+        CW_USEDEFAULT, CW_USEDEFAULT, WIN_W, WIN_H,
         nullptr, nullptr, hInst, nullptr);
     return g_hWnd;
 }
@@ -467,7 +704,6 @@ void AppendLog(const std::wstring& text)
     wchar_t ts[32];
     swprintf(ts, 32, L"[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
     g_logText = ts + text + L"\r\n" + g_logText;
-    // 限制日志长度
     if (g_logText.size() > 3000) {
         g_logText = g_logText.substr(0, 3000);
     }

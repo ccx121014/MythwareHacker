@@ -111,7 +111,7 @@ static int KillProcessByName(const std::wstring& name, std::vector<std::wstring>
 static bool IsUnderProgramFiles(const std::wstring& path)
 {
     static const wchar_t* prefix = L"c:\\program files";
-    const size_t prefixLen = 17;  // wcslen(L"c:\\program files")
+    const size_t prefixLen = wcslen(prefix);
     if (path.length() < prefixLen) return false;
     return _wcsnicmp(path.c_str(), prefix, prefixLen) == 0;
 }
@@ -350,10 +350,16 @@ static void ClearIFEO()
 // 清理 hosts 文件：删除所有以 "127.0.0.1" 开头的行
 static bool CleanHostsFile()
 {
-    const std::string hostsPath = "C:\\Windows\\System32\\drivers\\etc\\hosts";
+    wchar_t sysDir[MAX_PATH] = {};
+    GetWindowsDirectoryW(sysDir, MAX_PATH);
+    std::wstring hostsPathW = std::wstring(sysDir) + L"\\System32\\drivers\\etc\\hosts";
+    // 转换为 ANSI 路径（因为用 std::ifstream）
+    char hostsPath[MAX_PATH * 2] = {};
+    WideCharToMultiByte(CP_ACP, 0, hostsPathW.c_str(), -1, hostsPath, sizeof(hostsPath), nullptr, nullptr);
+    std::string hostsPathStr(hostsPath);
 
     // 读取
-    std::ifstream fin(hostsPath);
+    std::ifstream fin(hostsPathStr);
     if (!fin.is_open()) {
         logger::Warn(L"打开 hosts 文件失败");
         return false;
@@ -372,7 +378,7 @@ static bool CleanHostsFile()
     fin.close();
 
     // 写回
-    std::ofstream fout(hostsPath, std::ios::trunc);
+    std::ofstream fout(hostsPathStr, std::ios::trunc);
     if (!fout.is_open()) {
         logger::Warn(L"写回 hosts 文件失败");
         return false;

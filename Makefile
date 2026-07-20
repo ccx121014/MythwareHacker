@@ -9,10 +9,19 @@
 #   make all        同时构建 32 和 64 位
 #   make clean
 
-ARCH ?= $(shell echo "sizeof(void*)==8 ? 64 : 32" | gcc -E -P -x c - 2>/dev/null || echo 64)
+ARCH ?= 64
 
-CXX      := g++
-WINDRES  := windres
+ifeq ($(ARCH),32)
+    CXX      := i686-w64-mingw32-g++
+    WINDRES  := i686-w64-mingw32-windres
+    ARCH_FLAG := -m32
+    ARCH_SUFFIX := x86
+else
+    CXX      := x86_64-w64-mingw32-g++
+    WINDRES  := x86_64-w64-mingw32-windres
+    ARCH_FLAG := -m64
+    ARCH_SUFFIX := x64
+endif
 
 SRC_DIR  := src
 DLL_DIR  := src/dll
@@ -47,15 +56,7 @@ OPT      := -O2
 CXXFLAGS := $(WARN) $(OPT) -std=c++17 -Iinclude -static-libstdc++ -static-libgcc
 LDFLAGS  := -mwindows -static -lws2_32 -pthread -luser32 -lshell32 -lpsapi -ladvapi32 -ldwmapi -lgdi32 -lcomctl32 -lversion
 
-# 架构特定标志
-ifeq ($(ARCH),32)
-    ARCH_FLAG := -m32
-    ARCH_SUFFIX := x86
-else
-    ARCH_FLAG := -m64
-    ARCH_SUFFIX := x64
-endif
-
+# 架构特定标志已在上面设置
 CXXFLAGS += $(ARCH_FLAG)
 LDFLAGS  += $(ARCH_FLAG)
 
