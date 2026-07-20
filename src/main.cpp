@@ -220,7 +220,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         // 学生机房管理助手
         else if (cmd == ID_TRAY_KILL_CLASSROOM) {
             auto r = mctl::KillClassroomHelper();
-            MessageBoxW(hWnd, (L"已杀掉 " + std::to_wstring(r.killedCount) + L" 个助手进程").c_str(),
+            MessageBoxW(hWnd, (L"已杀掉 " + WSTR(r.killedCount) + L" 个助手进程").c_str(),
                         APP_TITLE, MB_OK | MB_ICONINFORMATION);
         } else if (cmd == ID_TRAY_CALC_PASSWORD) {
             mainwin::Show();
@@ -334,7 +334,7 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     int restored = persist::LoadAndRestore();
     if (restored > 0) {
         std::wstring msg = L"检测到上次程序退出时未恢复的窗口，已自动恢复 " +
-                           std::to_wstring(restored) + L" 个窗口。\n\n"
+                           WSTR(restored) + L" 个窗口。\n\n"
                            L"建议：下次退出时使用托盘菜单的「退出」按钮，\n"
                            L"程序会自动恢复所有窗口。";
         MessageBoxW(app::g_ctx.hWndMain, msg.c_str(), APP_TITLE, MB_OK | MB_ICONINFORMATION);

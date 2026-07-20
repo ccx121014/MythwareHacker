@@ -112,7 +112,7 @@ void Init()
 {
     SetUnhandledExceptionFilter(CrashHandler);
     Info(L"===== MythwareHacker 启动 =====");
-    Info(L"系统 Build: " + std::to_wstring(common::GetSystemBuildNumber()) +
+    Info(L"系统 Build: " + WSTR(common::GetSystemBuildNumber()) +
          L", 自身位数: " + std::wstring(common::IsSelf64Bit() ? L"64" : L"32") +
          L", WDA支持: " + std::wstring(common::IsWdaExcludeFromCaptureSupported() ? L"是" : L"否"));
 }

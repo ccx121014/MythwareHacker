@@ -2,8 +2,18 @@
 #include "core/password_calc.h"
 #include "utils/log.h"
 #include <string>
+#include <cstdio>
 
 namespace pwcalc {
+
+// MinGW-w64 的 std::to_wstring(long long) 有已知 bug，会输出乱码
+// 用 swprintf 替代
+static std::wstring LL2W(long long v)
+{
+    wchar_t buf[32];
+    swprintf(buf, 32, L"%lld", v);
+    return std::wstring(buf);
+}
 
 // 宽字符串转ANSI字符串（匹配原版 GetComputerNameA 的行为）
 static std::string WideToAnsi(const std::wstring& w)
@@ -50,7 +60,7 @@ std::wstring Calculate(AlgoVersion version, int year, int month, int day,
     case AlgoVersion::V11ToV1106:
         // 年×789 + 月×123 + 日×456 + 111
         result = (long long)year * 789 + (long long)month * 123 + (long long)day * 456 + 111;
-        return std::to_wstring(result);
+        return LL2W(result);
 
     case AlgoVersion::V1106ToV12: {
         // (月×159 + 日×357 + 计算机名末位 ASCII × 258) 转 7 进制
@@ -68,7 +78,7 @@ std::wstring Calculate(AlgoVersion version, int year, int month, int day,
     }
     }
 
-    return prefix + std::to_wstring(result);
+    return prefix + LL2W(result);
 }
 
 // 解析版本号字符串为 (major, minor)

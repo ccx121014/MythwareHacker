@@ -127,7 +127,7 @@ bool KillMythware()
         if (TerminateProcess(hProcess, 1)) {
             WaitForSingleObject(hProcess, 3000);
             CloseHandle(hProcess);
-            logger::Info(L"已杀掉极域进程 PID=" + std::to_wstring(pid));
+            logger::Info(L"已杀掉极域进程 PID=" + WSTR(pid));
             return true;
         }
         CloseHandle(hProcess);
@@ -137,11 +137,11 @@ bool KillMythware()
     if (DebugActiveProcess(pid)) {
         Sleep(200);
         DebugActiveProcessStop(pid);
-        logger::Info(L"通过 Debug 方式停止极域 PID=" + std::to_wstring(pid));
+        logger::Info(L"通过 Debug 方式停止极域 PID=" + WSTR(pid));
         return true;
     }
 
-    logger::Error(L"杀极域进程失败 PID=" + std::to_wstring(pid) + L" 错误: " + std::to_wstring(GetLastError()));
+    logger::Error(L"杀极域进程失败 PID=" + WSTR(pid) + L" 错误: " + WSTR(GetLastError()));
     return false;
 }
 
@@ -171,7 +171,7 @@ bool StartMythware()
         return true;
     }
 
-    logger::Error(L"启动极域失败: " + path + L" 错误: " + std::to_wstring(GetLastError()));
+    logger::Error(L"启动极域失败: " + path + L" 错误: " + WSTR(GetLastError()));
     return false;
 }
 
@@ -203,7 +203,7 @@ static bool ToggleProcessThreads(DWORD pid, bool suspend)
     CloseHandle(hSnap);
 
     logger::Info(std::wstring(suspend ? L"挂起" : L"恢复") + L"极域 " +
-              std::to_wstring(count) + L" 个线程");
+              WSTR(count) + L" 个线程");
     return count > 0;
 }
 

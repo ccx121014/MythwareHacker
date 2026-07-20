@@ -70,7 +70,7 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
     SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
     HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
     if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
-        result.error = L"CreatePipe 失败: " + std::to_wstring(GetLastError());
+        result.error = L"CreatePipe 失败: " + WSTR(GetLastError());
         return result;
     }
 
@@ -87,7 +87,7 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
                              CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     CloseHandle(hWritePipe);
     if (!ok) {
-        result.error = L"启动32位辅助程序失败: " + std::to_wstring(GetLastError()) +
+        result.error = L"启动32位辅助程序失败: " + WSTR(GetLastError()) +
                        L" 路径: " + helperPath;
         CloseHandle(hReadPipe);
         return result;
@@ -112,11 +112,11 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
         result.success = true;
         result.exitCode = exitCode;
         if (exitCode != 0) {
-            result.error = L"远程调用返回错误码: " + std::to_wstring(exitCode);
+            result.error = L"远程调用返回错误码: " + WSTR(exitCode);
         }
-        logger::Info(L"32位辅助程序注入成功 PID=" + std::to_wstring(pid) +
-                     L" 退出码=" + std::to_wstring(exitCode) +
-                     L" 成功窗口数=" + std::to_wstring(successCount));
+        logger::Info(L"32位辅助程序注入成功 PID=" + WSTR(pid) +
+                     L" 退出码=" + WSTR(exitCode) +
+                     L" 成功窗口数=" + WSTR(successCount));
     } else {
         std::wstring errStr;
         for (int i = 0; buf[i]; i++) errStr += (wchar_t)(unsigned char)buf[i];
@@ -166,7 +166,7 @@ Result InjectAndCall(HWND hwnd,
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
         FALSE, pid);
     if (!hProcess) {
-        result.error = L"OpenProcess 失败，错误码: " + std::to_wstring(GetLastError());
+        result.error = L"OpenProcess 失败，错误码: " + WSTR(GetLastError());
         return result;
     }
 
@@ -189,7 +189,7 @@ Result InjectAndCall(HWND hwnd,
     LPVOID pRemoteMem = VirtualAllocEx(hProcess, nullptr, pathBytes,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!pRemoteMem) {
-        result.error = L"VirtualAllocEx(DLL路径) 失败: " + std::to_wstring(GetLastError());
+        result.error = L"VirtualAllocEx(DLL路径) 失败: " + WSTR(GetLastError());
         CloseHandle(hProcess);
         return result;
     }
@@ -204,7 +204,7 @@ Result InjectAndCall(HWND hwnd,
     HANDLE hThread = CreateRemoteThread(hProcess, nullptr, 0,
         pfnLoadLibrary, pRemoteMem, 0, nullptr);
     if (!hThread) {
-        result.error = L"CreateRemoteThread(LoadLibrary) 失败: " + std::to_wstring(GetLastError()) +
+        result.error = L"CreateRemoteThread(LoadLibrary) 失败: " + WSTR(GetLastError()) +
                        L"（可能被 Exploit Protection / AppLocker 拦截）";
         VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
         CloseHandle(hProcess);
@@ -217,7 +217,7 @@ Result InjectAndCall(HWND hwnd,
     // 第二步：本地加载 DLL 获取导出函数偏移
     HMODULE hLocalDll = LoadLibraryW(dllPath.c_str());
     if (!hLocalDll) {
-        result.error = L"本地加载 DLL 失败: " + dllPath + L" 错误: " + std::to_wstring(GetLastError());
+        result.error = L"本地加载 DLL 失败: " + dllPath + L" 错误: " + WSTR(GetLastError());
         CloseHandle(hProcess);
         return result;
     }
@@ -235,7 +235,7 @@ Result InjectAndCall(HWND hwnd,
     // 第三步：在目标进程中找 DLL 基址
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
     if (hSnap == INVALID_HANDLE_VALUE) {
-        result.error = L"CreateToolhelp32Snapshot 失败: " + std::to_wstring(GetLastError());
+        result.error = L"CreateToolhelp32Snapshot 失败: " + WSTR(GetLastError());
         FreeLibrary(hLocalDll);
         CloseHandle(hProcess);
         return result;
@@ -280,7 +280,7 @@ Result InjectAndCall(HWND hwnd,
         pRemoteParams = VirtualAllocEx(hProcess, nullptr, paramsSize,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         if (!pRemoteParams) {
-            result.error = L"VirtualAllocEx(参数) 失败: " + std::to_wstring(GetLastError());
+            result.error = L"VirtualAllocEx(参数) 失败: " + WSTR(GetLastError());
             FreeLibrary(hLocalDll);
             CloseHandle(hProcess);
             return result;
@@ -292,7 +292,7 @@ Result InjectAndCall(HWND hwnd,
     hThread = CreateRemoteThread(hProcess, nullptr, 0,
         (LPTHREAD_START_ROUTINE)remoteProc, pRemoteParams, 0, nullptr);
     if (!hThread) {
-        result.error = L"CreateRemoteThread(函数调用) 失败: " + std::to_wstring(GetLastError());
+        result.error = L"CreateRemoteThread(函数调用) 失败: " + WSTR(GetLastError());
         if (pRemoteParams) VirtualFreeEx(hProcess, pRemoteParams, 0, MEM_RELEASE);
         FreeLibrary(hLocalDll);
         CloseHandle(hProcess);
@@ -312,12 +312,12 @@ Result InjectAndCall(HWND hwnd,
     result.exitCode = exitCode;
 
     if (exitCode != 0) {
-        result.error = L"远程调用返回错误码: " + std::to_wstring(exitCode) +
+        result.error = L"远程调用返回错误码: " + WSTR(exitCode) +
                        L"（0=成功, 1=参数错误, 2=WDA失败, 3=找不到API, 4=user32加载失败）";
     }
 
     logger::Info(L"注入调用 " + fullDllName + L"!" + AsciiToWide(funcName) +
-              L" PID=" + std::to_wstring(pid) + L" 退出码=" + std::to_wstring(exitCode));
+              L" PID=" + WSTR(pid) + L" 退出码=" + WSTR(exitCode));
     return result;
 }
 

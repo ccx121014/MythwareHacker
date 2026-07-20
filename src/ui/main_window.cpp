@@ -73,7 +73,7 @@ static std::wstring FormatMythwareStatus()
     case pctl::MythwareState::NoResponse:  stateText = L"无响应"; break;
     }
     std::wstring s = L"极域状态: " + stateText;
-    if (st.pid) s += L"  PID: " + std::to_wstring(st.pid);
+    if (st.pid) s += L"  PID: " + WSTR(st.pid);
     if (!st.version.empty()) s += L"  版本: " + st.version;
     s += L"  |  系统: " + std::wstring(common::IsWin10Build19041OrLater() ? L"Win10 2004+" : L"旧系统");
     s += L"  " + std::wstring(common::IsSelf64Bit() ? L"64位" : L"32位");
@@ -105,8 +105,8 @@ static void DoCalcPassword(HWND hWnd)
 
     // 同时显示4套算法结果（匹配原版 MythwareToolkit 的行为）
     auto all = pwcalc::CalculateAll(year, month, day, cn);
-    std::wstring result = L"日期: " + std::to_wstring(year) + L"-" +
-                          std::to_wstring(month) + L"-" + std::to_wstring(day) +
+    std::wstring result = L"日期: " + WSTR(year) + L"-" +
+                          WSTR(month) + L"-" + WSTR(day) +
                           L"  计算机: " + cn + L"\r\n" +
                           L"10.1前:     " + all.preV10 + L"\r\n" +
                           L"10.x:       " + all.v10ToV11 + L"\r\n" +
@@ -275,7 +275,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         // 系统操作
         else if (cmd == IDC_BTN_KILL_CLASSROOM) {
             auto r = mctl::KillClassroomHelper();
-            AppendLog(L"杀机房助手: " + std::to_wstring(r.killedCount) + L" 个进程");
+            AppendLog(L"杀机房助手: " + WSTR(r.killedCount) + L" 个进程");
         } else if (cmd == IDC_BTN_RESTORE_SYS) {
             auto r = mctl::UnblockSystemPrograms();
             AppendLog(L"解禁系统程序: " + r.detail);

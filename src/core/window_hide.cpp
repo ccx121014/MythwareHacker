@@ -122,7 +122,7 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
         } else if (!r.success) {
             diagErr = r.error;
         } else {
-            diagErr = L"远程调用失败，退出码: " + std::to_wstring(r.exitCode);
+            diagErr = L"远程调用失败，退出码: " + WSTR(r.exitCode);
         }
     }
 

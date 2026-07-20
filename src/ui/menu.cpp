@@ -46,7 +46,7 @@ void ShowTrayMenu(HWND hWnd)
     std::wstring stateText = L"极域状态: ";
     switch (status.state) {
     case pctl::MythwareState::NotRunning:  stateText += L"未运行"; break;
-    case pctl::MythwareState::Running:     stateText += L"运行中 (PID:" + std::to_wstring(status.pid) + L")"; break;
+    case pctl::MythwareState::Running:     stateText += L"运行中 (PID:" + WSTR(status.pid) + L")"; break;
     case pctl::MythwareState::Suspended:   stateText += L"已挂起"; break;
     case pctl::MythwareState::NoResponse:  stateText += L"无响应"; break;
     }
@@ -176,8 +176,8 @@ void ShowPasswordCalculator(HWND hWndParent)
 
     std::wstring msg = L"动态密码计算器\n\n"
                        L"版本: 11.06 (默认)\n"
-                       L"日期: " + std::to_wstring(st.wYear) + L"-" +
-                       std::to_wstring(st.wMonth) + L"-" + std::to_wstring(st.wDay) + L"\n"
+                       L"日期: " + WSTR(st.wYear) + L"-" +
+                       WSTR(st.wMonth) + L"-" + WSTR(st.wDay) + L"\n"
                        L"计算机名: " + computerName + L"\n\n"
                        L"计算结果（临时密码）:\n  " + pwd + L"\n\n"
                        L"如需其他版本，请修改源码中的版本号。";

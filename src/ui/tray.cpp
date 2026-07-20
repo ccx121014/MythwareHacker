@@ -56,9 +56,9 @@ void UpdateTip(HWND hWnd)
         else shownCount++;
     }
 
-    tip += L" [" + std::to_wstring(shownCount) + L"可见";
+    tip += L" [" + WSTR(shownCount) + L"可见";
     if (hiddenCount > 0)
-        tip += L", " + std::to_wstring(hiddenCount) + L"隐蔽";
+        tip += L", " + WSTR(hiddenCount) + L"隐蔽";
     tip += L"]";
 
     for (const auto& w : allWindows) {

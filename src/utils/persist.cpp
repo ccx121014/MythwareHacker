@@ -112,7 +112,7 @@ int LoadAndRestore()
     DeleteFileW(GetFilePath().c_str());
 
     if (restored > 0) {
-        logger::Info(L"恢复 " + std::to_wstring(restored) + L" 个上次未恢复的窗口");
+        logger::Info(L"恢复 " + WSTR(restored) + L" 个上次未恢复的窗口");
     }
     return restored;
 }

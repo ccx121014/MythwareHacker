@@ -20,6 +20,37 @@
 #include <vector>
 #include <algorithm>
 #include <functional>
+#include <cstdio>
+
+// ---------------------------------------------------------------------------
+// 整数转宽字符串
+// MinGW-w64 的 std::to_wstring 有已知 bug（对 long long/int 都可能输出乱码）
+// 用 swprintf 替代，安全可靠
+// ---------------------------------------------------------------------------
+inline std::wstring WSTR(int v)
+{
+    wchar_t buf[32]; swprintf(buf, 32, L"%d", v); return std::wstring(buf);
+}
+inline std::wstring WSTR(unsigned int v)
+{
+    wchar_t buf[32]; swprintf(buf, 32, L"%u", v); return std::wstring(buf);
+}
+inline std::wstring WSTR(long v)
+{
+    wchar_t buf[32]; swprintf(buf, 32, L"%ld", v); return std::wstring(buf);
+}
+inline std::wstring WSTR(unsigned long v)
+{
+    wchar_t buf[32]; swprintf(buf, 32, L"%lu", v); return std::wstring(buf);
+}
+inline std::wstring WSTR(long long v)
+{
+    wchar_t buf[32]; swprintf(buf, 32, L"%lld", v); return std::wstring(buf);
+}
+inline std::wstring WSTR(unsigned long long v)
+{
+    wchar_t buf[32]; swprintf(buf, 32, L"%llu", v); return std::wstring(buf);
+}
 
 // ---------------------------------------------------------------------------
 // 版本检测：运行时判断 WDA 是否可用（Win10 2004+ Build 19041）

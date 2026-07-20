@@ -70,7 +70,7 @@ bool StopAndDeleteDriver(const std::wstring& driverName)
 {
     SC_HANDLE hScm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (!hScm) {
-        logger::Error(L"OpenSCManager 失败: " + std::to_wstring(GetLastError()));
+        logger::Error(L"OpenSCManager 失败: " + WSTR(GetLastError()));
         return false;
     }
 
@@ -87,7 +87,7 @@ bool StopAndDeleteDriver(const std::wstring& driverName)
     SERVICE_STATUS status = {};
     if (QueryServiceStatus(hSvc, &status) && status.dwCurrentState != SERVICE_STOPPED) {
         if (!ControlService(hSvc, SERVICE_CONTROL_STOP, &status)) {
-            logger::Warn(L"停止驱动 " + driverName + L" 失败: " + std::to_wstring(GetLastError()));
+            logger::Warn(L"停止驱动 " + driverName + L" 失败: " + WSTR(GetLastError()));
         }
         // 等待停止
         for (int i = 0; i < 10; i++) {
@@ -105,7 +105,7 @@ bool StopAndDeleteDriver(const std::wstring& driverName)
     if (ok) {
         logger::Info(L"已卸载驱动 " + driverName);
     } else {
-        logger::Error(L"删除驱动 " + driverName + L" 失败: " + std::to_wstring(GetLastError()));
+        logger::Error(L"删除驱动 " + driverName + L" 失败: " + WSTR(GetLastError()));
     }
     return ok != FALSE;
 }
@@ -178,7 +178,7 @@ bool UnblockKeyboard()
     if (ok) {
         logger::Info(L"已解除键盘锁");
     } else {
-        logger::Warn(L"解除键盘锁失败: " + std::to_wstring(GetLastError()));
+        logger::Warn(L"解除键盘锁失败: " + WSTR(GetLastError()));
     }
     return ok != FALSE;
 }

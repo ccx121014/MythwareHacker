@@ -96,7 +96,7 @@ static int KillProcessByName(const std::wstring& name, std::vector<std::wstring>
                     if (TerminateProcess(hProcess, 1)) {
                         count++;
                         killed.push_back(exeName);
-                        logger::Info(L"已杀掉 " + exeName + L" PID=" + std::to_wstring(pe.th32ProcessID));
+                        logger::Info(L"已杀掉 " + exeName + L" PID=" + WSTR(pe.th32ProcessID));
                     }
                     CloseHandle(hProcess);
                 }
@@ -183,7 +183,7 @@ static int ScanAndKillDynamicProcesses(std::vector<std::wstring>& killed)
                 if (TerminateProcess(hTerm, 1)) {
                     count++;
                     killed.push_back(exeName);
-                    logger::Info(L"扫描杀掉 " + exeName + L" PID=" + std::to_wstring(pe.th32ProcessID));
+                    logger::Info(L"扫描杀掉 " + exeName + L" PID=" + WSTR(pe.th32ProcessID));
                 }
                 CloseHandle(hTerm);
             }
@@ -198,7 +198,7 @@ static bool StopAndDeleteService(const std::wstring& serviceName)
 {
     SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (!hSCM) {
-        logger::Warn(L"OpenSCManager 失败: " + std::to_wstring(GetLastError()));
+        logger::Warn(L"OpenSCManager 失败: " + WSTR(GetLastError()));
         return false;
     }
 
@@ -212,7 +212,7 @@ static bool StopAndDeleteService(const std::wstring& serviceName)
             logger::Info(L"服务 " + serviceName + L" 不存在，跳过");
             return true;
         }
-        logger::Warn(L"OpenService " + serviceName + L" 失败: " + std::to_wstring(err));
+        logger::Warn(L"OpenService " + serviceName + L" 失败: " + WSTR(err));
         return false;
     }
 
@@ -232,7 +232,7 @@ static bool StopAndDeleteService(const std::wstring& serviceName)
     // 再 DeleteService 删除
     bool ok = DeleteService(hSvc) != 0;
     if (!ok) {
-        logger::Warn(L"删除服务 " + serviceName + L" 失败: " + std::to_wstring(GetLastError()));
+        logger::Warn(L"删除服务 " + serviceName + L" 失败: " + WSTR(GetLastError()));
     } else {
         logger::Info(L"已删除服务 " + serviceName);
     }
@@ -263,7 +263,7 @@ KillResult KillClassroomHelper()
     // 4. 停止并删除 zmserv 服务
     StopAndDeleteService(L"zmserv");
 
-    logger::Info(L"共杀掉 " + std::to_wstring(result.killedCount) + L" 个助手进程");
+    logger::Info(L"共杀掉 " + WSTR(result.killedCount) + L" 个助手进程");
     return result;
 }
 
@@ -576,7 +576,7 @@ bool RestartExplorer()
         logger::Info(L"已重启 explorer.exe");
         return true;
     }
-    logger::Error(L"重启 explorer 失败: " + std::to_wstring(GetLastError()));
+    logger::Error(L"重启 explorer 失败: " + WSTR(GetLastError()));
     return false;
 }
 
