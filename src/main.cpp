@@ -1,20 +1,3 @@
-// main.cpp - MythwareHacker 主程序
-//
-// 集大成：JiYuTrainer + MythwareToolkit + MythwareHide 三项目功能整合
-//
-// 整合功能：
-//   1. 窗口隐蔽（防截屏）：WDA + DLL注入 + DWM Cloak + 屏幕外移动 四套方案
-//   2. 极域进程控制：杀/挂起/恢复 StudentMain、广播窗口化、退出黑屏
-//   3. 驱动卸载：解除网络限制(TDNetFilter) + U盘限制(TDFileFilter)
-//   4. 学生机房管理助手控制：杀进程、动态密码计算器(v9.x-v12.0)、一键解禁系统程序
-//
-// 兼容性：Win7+ 全兼容，32/64 双架构
-//   - Win10 2004+：WDA 全功能
-//   - Win7/8/旧Win10：自动降级
-//   - 32位/64位：注入严格位数匹配
-//
-// 编译：见 Makefile 或 scripts/build.bat
-
 #include "common.h"
 #include "ui/app_state.h"
 #include "ui/tray.h"
@@ -29,6 +12,7 @@
 #include "core/mythware_control.h"
 #include "core/password_calc.h"
 #include "core/inject.h"
+#include "core/self_protect.h"
 #include "utils/log.h"
 #include "utils/window_utils.h"
 #include "utils/persist.h"
@@ -38,7 +22,110 @@ namespace app {
 }
 
 // ---------------------------------------------------------------------------
-// 全局低级别鼠标钩子：标题栏右键检测 + 选择模式点击
+// 崩溃诊断日志
+// ---------------------------------------------------------------------------
+#include <imagehlp.h>
+
+static LONG WINAPI MyUnhandledExceptionFilter(EXCEPTION_POINTERS* ep)
+{
+    WCHAR crashDir[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, crashDir, MAX_PATH);
+    wchar_t* lastSlash = wcsrchr(crashDir, L'\\');
+    if (lastSlash) *lastSlash = 0;
+    wcscat(crashDir, L"\\crash_report.txt");
+
+    HANDLE hFile = CreateFileW(crashDir, GENERIC_WRITE, 0, nullptr,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (!hFile) return EXCEPTION_EXECUTE_HANDLER;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t timeBuf[64] = {};
+    swprintf(timeBuf, 64, L"%04d-%02d-%02d %02d:%02d:%02d",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+
+    std::wstring report = L"===== MythwareHacker 崩溃报告 =====\r\n";
+    report += L"时间: " + std::wstring(timeBuf) + L"\r\n";
+    report += L"版本: " + std::wstring(APP_VERSION) + L"\r\n";
+    report += L"系统: ";
+    if (common::IsWin10Build19041OrLater()) report += L"Win10 2004+\r\n";
+    else report += L"旧版 Windows\r\n";
+    report += L"位数: ";
+    report += common::IsSelf64Bit() ? L"64位" : L"32位";
+    report += L"\r\n";
+
+    if (ep) {
+        report += L"\r\n===== 异常信息 =====\r\n";
+        report += L"异常码: 0x" + WSTR((long long)ep->ExceptionRecord->ExceptionCode) + L"\r\n";
+        report += L"异常地址: 0x" + WSTR((long long)ep->ExceptionRecord->ExceptionAddress) + L"\r\n";
+
+        report += L"\r\n===== 堆栈回溯 =====\r\n";
+        CONTEXT ctx = *ep->ContextRecord;
+        STACKFRAME64 sf = {};
+        sf.AddrPC.Mode = AddrModeFlat;
+        sf.AddrPC.Offset = (DWORD64)ep->ExceptionRecord->ExceptionAddress;
+        sf.AddrStack.Mode = AddrModeFlat;
+        sf.AddrFrame.Mode = AddrModeFlat;
+#ifdef _M_X64
+        sf.AddrStack.Offset = (DWORD64)ctx.Rsp;
+        sf.AddrFrame.Offset = (DWORD64)ctx.Rbp;
+#else
+        sf.AddrStack.Offset = (DWORD64)ctx.Esp;
+        sf.AddrFrame.Offset = (DWORD64)ctx.Ebp;
+#endif
+
+        HANDLE hProc = GetCurrentProcess();
+        HANDLE hThread = GetCurrentThread();
+        DWORD machineType = IMAGE_FILE_MACHINE_AMD64;
+        if (!common::IsSelf64Bit()) machineType = IMAGE_FILE_MACHINE_I386;
+
+        for (int i = 0; i < 30; i++) {
+            if (!StackWalk64(machineType, hProc, hThread, &sf, &ctx,
+                             nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {
+                break;
+            }
+
+            wchar_t symbolBuf[512] = {};
+            IMAGEHLP_SYMBOL64* symbol = (IMAGEHLP_SYMBOL64*)malloc(sizeof(IMAGEHLP_SYMBOL64) + 512);
+            if (symbol) {
+                symbol->SizeOfStruct = sizeof(IMAGEHLP_SYMBOL64);
+                symbol->MaxNameLength = 512;
+                DWORD64 disp = 0;
+                if (SymGetSymFromAddr64(hProc, sf.AddrPC.Offset, &disp, symbol)) {
+                    swprintf(symbolBuf, 512, L"%S + 0x%llX", symbol->Name, (unsigned long long)disp);
+                } else {
+                    swprintf(symbolBuf, 512, L"0x%llX", (unsigned long long)sf.AddrPC.Offset);
+                }
+                free(symbol);
+            }
+
+            report += L"[" + WSTR(i) + L"] " + std::wstring(symbolBuf) + L"\r\n";
+        }
+    }
+
+    report += L"\r\n===== 系统信息 =====\r\n";
+    OSVERSIONINFOEXW osvi = {};
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
+    GetVersionExW((LPOSVERSIONINFOW)&osvi);
+    report += L"Windows 版本: " + WSTR(osvi.dwMajorVersion) + L"." + WSTR(osvi.dwMinorVersion) +
+              L" Build " + WSTR(osvi.dwBuildNumber) + L"\r\n";
+
+    DWORD procId = GetCurrentProcessId();
+    report += L"进程ID: " + WSTR(procId) + L"\r\n";
+
+    DWORD written = 0;
+    WriteFile(hFile, report.c_str(), (DWORD)(report.size() * sizeof(wchar_t)), &written, nullptr);
+    CloseHandle(hFile);
+
+    logger::Error(L"程序崩溃！报告已保存到: " + std::wstring(crashDir));
+    MessageBoxW(nullptr, (L"程序崩溃！报告已保存到: " + std::wstring(crashDir)).c_str(),
+                L"崩溃", MB_OK | MB_ICONERROR);
+
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// ---------------------------------------------------------------------------
+// 全局低级别鼠标钩子
 // ---------------------------------------------------------------------------
 static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
@@ -47,7 +134,6 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
 
     auto* p = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
 
-    // 选择模式：左键隐蔽/恢复，右键/中键退出
     if (app::g_ctx.selectMode) {
         if (wParam == WM_LBUTTONDOWN) {
             POINT pt = p->pt;
@@ -74,7 +160,6 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
         return CallNextHookEx(app::g_ctx.hMouseHook, nCode, wParam, lParam);
     }
 
-    // 标题栏右键检测
     if (wParam == WM_RBUTTONUP) {
         HWND targetHwnd = nullptr;
         if (wutil::IsPointOnTitleBar(p->pt, &targetHwnd) &&
@@ -86,6 +171,70 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
     }
 
     return CallNextHookEx(app::g_ctx.hMouseHook, nCode, wParam, lParam);
+}
+
+// ---------------------------------------------------------------------------
+// 自动监控极域进程
+// ---------------------------------------------------------------------------
+static HANDLE g_hMonitorThread = nullptr;
+static bool g_monitorRunning = false;
+static bool g_autoBroadcastWindowed = false;
+
+static DWORD WINAPI MonitorThreadProc(LPVOID)
+{
+    while (g_monitorRunning) {
+        auto st = pctl::GetMythwareStatus();
+        static pctl::MythwareState lastState = pctl::MythwareState::NotRunning;
+        static bool wasBlackScreen = false;
+
+        if (st.state != lastState) {
+            switch (st.state) {
+            case pctl::MythwareState::NotRunning:
+                logger::Info(L"极域监控: 已关闭");
+                break;
+            case pctl::MythwareState::Running:
+                logger::Info(L"极域监控: 正在运行");
+                break;
+            case pctl::MythwareState::Suspended:
+                logger::Info(L"极域监控: 已挂起");
+                break;
+            case pctl::MythwareState::NoResponse:
+                logger::Info(L"极域监控: 无响应");
+                break;
+            }
+            lastState = st.state;
+        }
+
+        if (g_autoBroadcastWindowed && st.state == pctl::MythwareState::Running) {
+            bool isBlack = pctl::IsBlackScreenActive();
+            if (isBlack && !wasBlackScreen) {
+                pctl::BroadcastToWindowed();
+                logger::Info(L"极域监控: 自动将广播窗口化");
+            }
+            wasBlackScreen = isBlack;
+        }
+
+        Sleep(2000);
+    }
+    return 0;
+}
+
+static void StartMonitor()
+{
+    if (g_hMonitorThread) return;
+    g_monitorRunning = true;
+    g_hMonitorThread = CreateThread(nullptr, 0, MonitorThreadProc, nullptr, 0, nullptr);
+    logger::Info(L"极域监控线程已启动");
+}
+
+static void StopMonitor()
+{
+    g_monitorRunning = false;
+    if (g_hMonitorThread) {
+        WaitForSingleObject(g_hMonitorThread, 2000);
+        CloseHandle(g_hMonitorThread);
+        g_hMonitorThread = nullptr;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +272,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     case WM_COMMAND: {
         WORD cmd = LOWORD(wParam);
 
-        // 标题栏菜单
         if (cmd == ID_TITLEBAR_HIDE) {
             if (app::g_ctx.lastTitleBarHWnd && IsWindow(app::g_ctx.lastTitleBarHWnd)) {
                 std::wstring diag;
@@ -138,9 +286,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             }
             tray::UpdateTip(hWnd);
         }
-        // 窗口列表菜单
         else if (cmd >= ID_TRAY_WINDOW_LIST_BASE) {
-            HWND hwnd = menu::GetWindowFromMenuId(cmd); // 注意：menu.cpp 中定义
+            HWND hwnd = menu::GetWindowFromMenuId(cmd);
             if (hwnd) {
                 std::wstring diag;
                 if (whide::IsHidden(hwnd))
@@ -150,7 +297,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
                 tray::UpdateTip(hWnd);
             }
         }
-        // 窗口隐蔽功能
         else if (cmd == ID_TRAY_HIDE_CURRENT) {
             whide::ToggleCurrent();
             tray::UpdateTip(hWnd);
@@ -166,7 +312,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         } else if (cmd == ID_TRAY_FLOAT_TOGGLE) {
             floatw::Toggle();
         }
-        // 极域进程控制
         else if (cmd == ID_TRAY_KILL_MYTHWARE) {
             if (MessageBoxW(hWnd, L"确认强杀极域进程？", APP_TITLE, MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 pctl::KillMythware();
@@ -183,7 +328,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         } else if (cmd == ID_TRAY_EXIT_BLACK) {
             pctl::ExitBlackScreen();
         }
-        // 限制解除
         else if (cmd == ID_TRAY_UNBLOCK_NET) {
             if (MessageBoxW(hWnd, L"确认卸载 TDNetFilter 驱动以解除网络限制？", APP_TITLE, MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 bool ok = drvctl::UnblockNetwork();
@@ -193,11 +337,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         } else if (cmd == ID_TRAY_UNBLOCK_USB) {
             if (MessageBoxW(hWnd, L"确认卸载 TDFileFilter 驱动以解除 U 盘限制？", APP_TITLE, MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 bool ok = drvctl::UnblockUSB();
-                MessageBoxW(hWnd, ok ? L"U 盘限制已解除" : L"解除失败，请查看日志",
+                MessageBoxW(hWnd, ok ? L"U盘限制已解除" : L"解除失败，请查看日志",
                             APP_TITLE, MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
             }
         }
-        // 学生机房管理助手
         else if (cmd == ID_TRAY_KILL_CLASSROOM) {
             auto r = mctl::KillClassroomHelper();
             MessageBoxW(hWnd, (L"已杀掉 " + WSTR(r.killedCount) + L" 个助手进程").c_str(),
@@ -208,11 +351,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             auto r = mctl::UnblockSystemPrograms();
             MessageBoxW(hWnd, r.detail.c_str(), APP_TITLE, MB_OK | MB_ICONINFORMATION);
         }
-        // 显示主界面
         else if (cmd == ID_TRAY_SHOW_GUI) {
             mainwin::Show();
         }
-        // 退出
         else if (cmd == ID_TRAY_EXIT) {
             DestroyWindow(hWnd);
         }
@@ -220,6 +361,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     }
 
     case WM_DESTROY:
+        StopMonitor();
+        spctl::DisableSelfProtect();
         whide::RestoreAll();
         persist::Delete();
         preview::Cleanup();
@@ -241,9 +384,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     return 0;
 }
 
-// ---------------------------------------------------------------------------
-// 注册主窗口类
-// ---------------------------------------------------------------------------
 static ATOM RegisterMainClass(HINSTANCE hInst)
 {
     WNDCLASSEXW wc = {};
@@ -261,9 +401,11 @@ static ATOM RegisterMainClass(HINSTANCE hInst)
 // ---------------------------------------------------------------------------
 int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 {
+    SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+    SetUnhandledExceptionFilter(MyUnhandledExceptionFilter);
+
     app::g_ctx.hInst = hInst;
 
-    // 单实例互斥锁
     HANDLE hMutex = CreateMutexW(nullptr, TRUE, APP_MUTEX_NAME);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         MessageBoxW(nullptr,
@@ -272,16 +414,13 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         return 0;
     }
 
-    // 初始化日志系统
     logger::Init();
 
-    // 注册所有窗口类
     if (!RegisterMainClass(hInst)) return 1;
     if (!mainwin::RegisterClass(hInst)) return 1;
     if (!preview::RegisterClass(hInst)) return 1;
     if (!floatw::RegisterClass(hInst)) return 1;
 
-    // 创建主窗口（隐藏，仅用于消息处理）
     app::g_ctx.hWndMain = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         APP_MAIN_CLASS,
@@ -294,23 +433,17 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     ShowWindow(app::g_ctx.hWndMain, SW_HIDE);
     UpdateWindow(app::g_ctx.hWndMain);
 
-    // 加载光标
     app::g_ctx.hCursorCross  = LoadCursor(nullptr, IDC_CROSS);
     app::g_ctx.hCursorNormal = LoadCursor(nullptr, IDC_ARROW);
 
-    // 初始化托盘
     tray::Add(app::g_ctx.hWndMain);
 
-    // 注册快捷键
     hotkey::RegisterAll(app::g_ctx.hWndMain);
 
-    // 安装全局低级鼠标钩子
     app::g_ctx.hMouseHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, hInst, 0);
 
-    // 定时刷新托盘 tooltip
     SetTimer(app::g_ctx.hWndMain, TRAYTIP_TIMER_ID, TRAYTIP_INTERVAL_MS, nullptr);
 
-    // 启动时检查并恢复上次未恢复的窗口
     int restored = persist::LoadAndRestore();
     if (restored > 0) {
         std::wstring msg = L"检测到上次程序退出时未恢复的窗口，已自动恢复 " +
@@ -320,11 +453,12 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
         MessageBoxW(app::g_ctx.hWndMain, msg.c_str(), APP_TITLE, MB_OK | MB_ICONINFORMATION);
     }
 
-    // 创建并显示图形界面
     mainwin::Create(hInst);
     mainwin::Show();
 
-    // 消息循环
+    StartMonitor();
+    spctl::EnableSelfProtect();
+
     MSG msg;
     while (GetMessage(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
@@ -334,5 +468,6 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
     preview::Cleanup();
     ReleaseMutex(hMutex);
     CloseHandle(hMutex);
+    SymCleanup(GetCurrentProcess());
     return static_cast<int>(msg.wParam);
 }

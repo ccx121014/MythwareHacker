@@ -56,4 +56,7 @@ bool BroadcastToFullscreen();
 //   级别4：确认杀进程
 bool ExitBlackScreen();
 
+// 检查黑屏窗口是否正在显示（用于自动监控）
+bool IsBlackScreenActive();
+
 } // namespace pctl

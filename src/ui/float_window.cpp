@@ -158,6 +158,7 @@ void Show()
 {
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         ShowWindow(app::g_ctx.hWndFloat, SW_SHOWNORMAL);
+        SetWindowDisplayAffinity(app::g_ctx.hWndFloat, WDA_EXCLUDEFROMCAPTURE);
         StartTopmostThread();
         return;
     }
@@ -177,6 +178,7 @@ void Show()
     if (app::g_ctx.hWndFloat) {
         ShowWindow(app::g_ctx.hWndFloat, SW_SHOWNORMAL);
         UpdateWindow(app::g_ctx.hWndFloat);
+        SetWindowDisplayAffinity(app::g_ctx.hWndFloat, WDA_EXCLUDEFROMCAPTURE);
         StartTopmostThread();
         logger::Info(L"悬浮窗已显示（轮询置顶）");
     }

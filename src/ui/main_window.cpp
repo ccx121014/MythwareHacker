@@ -723,9 +723,10 @@ void Show()
     if (g_hWnd) {
         ShowWindow(g_hWnd, SW_SHOW);
         SetForegroundWindow(g_hWnd);
+        SetWindowDisplayAffinity(g_hWnd, WDA_EXCLUDEFROMCAPTURE);
         RefreshStatus();
         RefreshWindowList();
-        StartTopmostThread();  // 启动轮询置顶
+        StartTopmostThread();
     }
 }
 

@@ -371,26 +371,21 @@ bool ExitBlackScreen()
 
     HWND hwnd = data.hwnd;
 
-    // 4 级递进
-    // 级别1：隐藏
     ShowWindow(hwnd, SW_HIDE);
     if (!IsWindowVisible(hwnd)) {
         logger::Info(L"黑屏窗口已隐藏");
         return true;
     }
 
-    // 级别2：最小化
     ShowWindow(hwnd, SW_MINIMIZE);
     Sleep(100);
     if (!IsWindowVisible(hwnd)) return true;
 
-    // 级别3：发送 ESC
     PostMessage(hwnd, WM_KEYDOWN, VK_ESCAPE, 0);
     PostMessage(hwnd, WM_KEYUP, VK_ESCAPE, 0);
     Sleep(200);
     if (!IsWindowVisible(hwnd)) return true;
 
-    // 级别4：发送 WM_CLOSE 关闭窗口（不杀进程）
     PostMessage(hwnd, WM_CLOSE, 0, 0);
     Sleep(200);
     if (!IsWindowVisible(hwnd)) {
@@ -400,6 +395,13 @@ bool ExitBlackScreen()
 
     logger::Warn(L"所有级别均未能退出黑屏窗口");
     return false;
+}
+
+bool IsBlackScreenActive()
+{
+    BlackScreenData data = {};
+    EnumWindows(FindBlackScreenProc, reinterpret_cast<LPARAM>(&data));
+    return data.hwnd != nullptr;
 }
 
 } // namespace pctl

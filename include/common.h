@@ -138,7 +138,7 @@ inline bool IsWin10Build19041OrLater()
 // ---------------------------------------------------------------------------
 #define APP_NAME                 L"MythwareHacker"
 #define APP_TITLE                L"极域黑客工具"
-#define APP_VERSION              L"2.0.0"
+#define APP_VERSION              L"2.1.0"
 #define APP_MUTEX_NAME           L"MythwareHacker_Mutex_v2"
 #define APP_MAIN_CLASS           L"MythwareHackerMainClass"
 #define APP_PREVIEW_CLASS        L"MythwareHackerPreviewClass"

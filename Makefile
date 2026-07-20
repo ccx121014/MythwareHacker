@@ -43,6 +43,7 @@ MAIN_SRCS := \
     $(SRC_DIR)/core/mythware_control.cpp \
     $(SRC_DIR)/core/password_calc.cpp \
     $(SRC_DIR)/core/inject.cpp \
+    $(SRC_DIR)/core/self_protect.cpp \
     $(SRC_DIR)/utils/log.cpp \
     $(SRC_DIR)/utils/window_utils.cpp \
     $(SRC_DIR)/utils/persist.cpp
@@ -54,7 +55,7 @@ DLL_SRC := $(DLL_DIR)/hide_hook.cpp
 WARN     := -Wall -Wextra
 OPT      := -O2
 CXXFLAGS := $(WARN) $(OPT) -std=c++17 -Iinclude -static-libstdc++ -static-libgcc
-LDFLAGS  := -mwindows -static -lws2_32 -pthread -luser32 -lshell32 -lpsapi -ladvapi32 -ldwmapi -lgdi32 -lmsimg32 -lcomctl32 -lversion
+LDFLAGS  := -mwindows -static -lws2_32 -pthread -luser32 -lshell32 -lpsapi -ladvapi32 -ldwmapi -lgdi32 -lmsimg32 -lcomctl32 -lversion -limagehlp
 
 # 架构特定标志已在上面设置
 CXXFLAGS += $(ARCH_FLAG)
