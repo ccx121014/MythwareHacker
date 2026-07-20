@@ -1,8 +1,21 @@
 // password_calc.cpp - 动态密码计算器实现
 #include "core/password_calc.h"
 #include "utils/log.h"
+#include <string>
 
 namespace pwcalc {
+
+// 宽字符串转ANSI字符串（匹配原版 GetComputerNameA 的行为）
+static std::string WideToAnsi(const std::wstring& w)
+{
+    if (w.empty()) return "";
+    int len = WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(),
+                                  nullptr, 0, nullptr, nullptr);
+    std::string s(len, '\0');
+    WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(),
+                        &s[0], len, nullptr, nullptr);
+    return s;
+}
 
 std::wstring ToBase7(unsigned long long n)
 {
@@ -41,11 +54,15 @@ std::wstring Calculate(AlgoVersion version, int year, int month, int day,
 
     case AlgoVersion::V1106ToV12: {
         // (月×159 + 日×357 + 计算机名末位 ASCII × 258) 转 7 进制
-        wchar_t lastChar = L'0';
+        // 注意：原版用 char（ANSI字节），不是 wchar_t
+        // 计算机名通常只含ASCII，但为严格匹配原版行为，取最后一个字节
+        char lastChar = '0';
         if (!computerName.empty()) {
-            lastChar = computerName.back();
+            // 转为ANSI取末字节，匹配原版 char lastChar = szComputerName[len-1]
+            std::string ansi = WideToAnsi(computerName);
+            if (!ansi.empty()) lastChar = ansi.back();
         }
-        int ascii = (int)lastChar;
+        int ascii = (int)(unsigned char)lastChar;
         result = (long long)month * 159 + (long long)day * 357 + (long long)ascii * 258;
         return ToBase7((unsigned long long)result);
     }
@@ -92,27 +109,34 @@ std::wstring CalculateAuto(const std::wstring& versionStr,
         return L"版本号格式错误";
     }
 
-    // v9.x ~ v10.0 前
-    if (major < 10) {
+    // v9.x ~ 10.0（原版标签"10.1-"表示10.1之前）
+    if (major < 10 || (major == 10 && minor < 1)) {
         return Calculate(AlgoVersion::PreV10, year, month, day, computerName);
     }
-    // 10.0 ~ 11.0
+    // 10.1 ~ 10.x（原版标签"10.x"）
     if (major == 10) {
         return Calculate(AlgoVersion::V10ToV11, year, month, day, computerName);
     }
-    // 11.0 ~ 11.06 首发版
+    // 11.0 ~ 11.05（原版标签"11.0x"）
     if (major == 11 && minor < 6) {
         return Calculate(AlgoVersion::V11ToV1106, year, month, day, computerName);
     }
-    // 11.06 第三版 ~ 12.0
-    if ((major == 11 && minor >= 6) || major == 12) {
-        return Calculate(AlgoVersion::V1106ToV12, year, month, day, computerName);
-    }
-    // 12 以上默认用最新算法
-    if (major > 12) {
+    // 11.06 ~ 12.0+（原版标签"11.06~12.0"）
+    if ((major == 11 && minor >= 6) || major >= 12) {
         return Calculate(AlgoVersion::V1106ToV12, year, month, day, computerName);
     }
     return L"不支持的版本";
+}
+
+AllResults CalculateAll(int year, int month, int day,
+                        const std::wstring& computerName)
+{
+    AllResults r;
+    r.preV10     = Calculate(AlgoVersion::PreV10,     year, month, day, computerName);
+    r.v10ToV11   = Calculate(AlgoVersion::V10ToV11,   year, month, day, computerName);
+    r.v11ToV1106 = Calculate(AlgoVersion::V11ToV1106, year, month, day, computerName);
+    r.v1106ToV12 = Calculate(AlgoVersion::V1106ToV12, year, month, day, computerName);
+    return r;
 }
 
 std::wstring GetLocalComputerName()

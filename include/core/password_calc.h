@@ -31,6 +31,17 @@ std::wstring CalculateAuto(const std::wstring& versionStr,
                            int year, int month, int day,
                            const std::wstring& computerName = L"");
 
+// 同时计算所有4套算法的结果（匹配原版同时显示4个密码的行为）
+// 返回的 vector 固定4个元素，顺序对应 AlgoVersion 枚举
+struct AllResults {
+    std::wstring preV10;        // 10.1前
+    std::wstring v10ToV11;      // 10.x
+    std::wstring v11ToV1106;    // 11.0x
+    std::wstring v1106ToV12;    // 11.06~12.0
+};
+AllResults CalculateAll(int year, int month, int day,
+                        const std::wstring& computerName = L"");
+
 // 获取当前计算机名
 std::wstring GetLocalComputerName();
 

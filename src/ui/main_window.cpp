@@ -103,16 +103,23 @@ static void DoCalcPassword(HWND hWnd)
     std::wstring verStr = ver;
     if (verStr.empty()) verStr = L"11.06";
 
-    std::wstring pwd = pwcalc::CalculateAuto(verStr, year, month, day, cn);
+    // 同时显示4套算法结果（匹配原版 MythwareToolkit 的行为）
+    auto all = pwcalc::CalculateAll(year, month, day, cn);
+    std::wstring result = L"日期: " + std::to_wstring(year) + L"-" +
+                          std::to_wstring(month) + L"-" + std::to_wstring(day) +
+                          L"  计算机: " + cn + L"\r\n" +
+                          L"10.1前:     " + all.preV10 + L"\r\n" +
+                          L"10.x:       " + all.v10ToV11 + L"\r\n" +
+                          L"11.0x:      " + all.v11ToV1106 + L"\r\n" +
+                          L"11.06~12.0: " + all.v1106ToV12 + L"\r\n";
 
-    std::wstring result = L"版本: " + verStr + L"\n" +
-                          L"日期: " + std::to_wstring(year) + L"-" +
-                          std::to_wstring(month) + L"-" + std::to_wstring(day) + L"\n" +
-                          L"计算机名: " + cn + L"\n" +
-                          L"密码: " + pwd;
+    // 根据输入版本号高亮对应结果
+    std::wstring pwd = pwcalc::CalculateAuto(verStr, year, month, day, cn);
+    result += L"\r\n当前版本 " + verStr + L" → " + pwd;
+
     std::wstring mythPwd = pwcalc::ReadMythwarePassword();
     if (!mythPwd.empty()) {
-        result += L"\n极域注册表密码: " + mythPwd;
+        result += L"\r\n极域注册表密码: " + mythPwd;
     }
     SetDlgItemTextW(hWnd, IDC_EDIT_RESULT, result.c_str());
     AppendLog(L"密码计算: " + verStr + L" → " + pwd);
@@ -208,7 +215,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         MkBtn(hWnd, L"计算密码", IDC_BTN_CALC_PASSWORD, 645, 386, 175, 28);
         MkBtn(hWnd, L"读取极域密码", IDC_BTN_READ_MYTH_PWD, 645, 416, 175, 28);
         MkLabel(hWnd, L"计算结果:", 420, 425, 70, 20);
-        MkEdit(hWnd, L"", IDC_EDIT_RESULT, 420, 445, 395, 30,
+        MkEdit(hWnd, L"", IDC_EDIT_RESULT, 420, 445, 395, 35,
                WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL);
 
         // 操作日志
