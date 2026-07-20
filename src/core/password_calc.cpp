@@ -6,21 +6,13 @@
 
 namespace pwcalc {
 
-// MinGW-w64 的 std::to_wstring(long long) 有已知 bug，会输出乱码
-// 用 swprintf 替代
-static std::wstring LL2W(long long v)
-{
-    wchar_t buf[32];
-    swprintf(buf, 32, L"%lld", v);
-    return std::wstring(buf);
-}
-
 // 宽字符串转ANSI字符串（匹配原版 GetComputerNameA 的行为）
 static std::string WideToAnsi(const std::wstring& w)
 {
     if (w.empty()) return "";
     int len = WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(),
                                   nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
     std::string s(len, '\0');
     WideCharToMultiByte(CP_ACP, 0, w.c_str(), (int)w.size(),
                         &s[0], len, nullptr, nullptr);
@@ -60,7 +52,7 @@ std::wstring Calculate(AlgoVersion version, int year, int month, int day,
     case AlgoVersion::V11ToV1106:
         // 年×789 + 月×123 + 日×456 + 111
         result = (long long)year * 789 + (long long)month * 123 + (long long)day * 456 + 111;
-        return LL2W(result);
+        return WSTR(result);
 
     case AlgoVersion::V1106ToV12: {
         // (月×159 + 日×357 + 计算机名末位 ASCII × 258) 转 7 进制
@@ -78,7 +70,7 @@ std::wstring Calculate(AlgoVersion version, int year, int month, int day,
     }
     }
 
-    return prefix + LL2W(result);
+    return prefix + WSTR(result);
 }
 
 // 解析版本号字符串为 (major, minor)
@@ -164,21 +156,32 @@ std::wstring ReadMythwarePassword()
     BYTE data[MAX_PATH * 2] = {};
     DWORD dataSize = sizeof(data);
 
-    // 使用 KEY_WOW64_32KEY 标志访问32位注册表视图（匹配原版）
-    LONG r = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+    // 尝试多个可能的注册表路径（匹配原版 MythwareToolkit）
+    const wchar_t* keyPaths[] = {
         L"SOFTWARE\\TopDomain\\e-Learning Class\\Student",
-        0, KEY_READ | KEY_WOW64_32KEY, &hKey);
-    if (r != ERROR_SUCCESS) {
-        // 回退到 WOW6432Node 路径
-        r = RegOpenKeyExW(HKEY_LOCAL_MACHINE,
-            L"SOFTWARE\\WOW6432Node\\TopDomain\\e-Learning Class\\Student",
-            0, KEY_READ, &hKey);
-    }
-    if (r != ERROR_SUCCESS) return L"";
+        L"SOFTWARE\\TopDomain\\e-Learning Class Standard\\1.00",
+        L"SOFTWARE\\TopDomain\\极域电子教室",
+        nullptr
+    };
 
-    r = RegQueryValueExA(hKey, "knock1", nullptr, nullptr, data, &dataSize);
+    bool found = false;
+    for (int i = 0; keyPaths[i]; i++) {
+        // 使用 KEY_WOW64_32KEY 标志访问32位注册表视图（匹配原版）
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, keyPaths[i],
+                          0, KEY_READ | KEY_WOW64_32KEY, &hKey) == ERROR_SUCCESS) {
+            dataSize = sizeof(data);
+            if (RegQueryValueExA(hKey, "knock1", nullptr, nullptr, data, &dataSize) == ERROR_SUCCESS
+                && dataSize >= 4) {
+                found = true;
+                break;
+            }
+            RegCloseKey(hKey);
+            hKey = nullptr;
+        }
+    }
+
+    if (!found) return L"";
     RegCloseKey(hKey);
-    if (r != ERROR_SUCCESS || dataSize < 4) return L"";
 
     // 2. 解密：每4字节做 XOR（PECL 模式，与原版完全一致）
     BYTE* buf = data;
@@ -194,7 +197,7 @@ std::wstring ReadMythwarePassword()
     // 这样可以正确提取含字母+数字的混合密码（如 "abc123"）
     // 注册表中的密码是 UTF-16LE 编码，每个字符占2字节（低字节+高字节0）
     std::wstring password;
-    for (int i = 0; i < (int)dataSize; i += 1) {
+    for (int i = 0; i + 1 < (int)dataSize; i += 1) {
         if (buf[i + 1] == 0) {
             if (buf[i] == 0) break;
             password += (wchar_t)buf[i];

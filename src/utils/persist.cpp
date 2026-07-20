@@ -74,7 +74,7 @@ int LoadAndRestore()
         std::wstring processName;
         if (nameLen > 0) {
             processName.resize(nameLen / sizeof(wchar_t));
-            ReadFile(hFile, &processName[0], nameLen, &read, nullptr);
+            if (!ReadFile(hFile, &processName[0], nameLen, &read, nullptr)) break;
         }
 
         DWORD titleLen = 0;
@@ -83,7 +83,7 @@ int LoadAndRestore()
         std::wstring title;
         if (titleLen > 0) {
             title.resize(titleLen / sizeof(wchar_t));
-            ReadFile(hFile, &title[0], titleLen, &read, nullptr);
+            if (!ReadFile(hFile, &title[0], titleLen, &read, nullptr)) break;
         }
 
         // 先 FindWindow 精确匹配

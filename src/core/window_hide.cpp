@@ -101,6 +101,10 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
     hw.title = wutil::GetWindowTitle(hwnd);
     hw.processName = wutil::GetProcessName(hwnd);
 
+    // 预先保存当前窗口位置（用于持久化恢复）
+    hw.origPlacement.length = sizeof(WINDOWPLACEMENT);
+    GetWindowPlacement(hwnd, &hw.origPlacement);
+
     bool anySuccess = false;
 
     // 方案1：本进程调用 WDA（对其他进程窗口通常无效，但尝试）
@@ -142,8 +146,8 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
     if (!anySuccess) {
         MoveOffscreen(hwnd, hw);
         anySuccess = true;
-        diagErr.clear();
         logger::Warn(L"WDA/注入/Cloak 均失败，使用屏幕外方案: " + hw.title + L" 诊断: " + diagErr);
+        diagErr.clear();
     }
 
     g_hidden.push_back(hw);
@@ -170,28 +174,34 @@ bool Restore(HWND hwnd)
 
     if (!IsWindow(hwnd)) return false;
 
-    // 反向执行所有可能生效的方案
+    // 反向执行所有生效的方案
     DWORD hwndPid = 0;
     GetWindowThreadProcessId(hwnd, &hwndPid);
 
+    // WDA 恢复（仅本进程窗口且 wdaOk 时）
     auto pfnWda = GetSetWindowDisplayAffinity();
-    if (pfnWda && hwndPid == GetCurrentProcessId()) {
+    if (pfnWda && hw.wdaOk && hwndPid == GetCurrentProcessId()) {
         pfnWda(hwnd, WDA_NONE);
     }
 
-    // 注入恢复（affinity=0）
-    struct RemoteParams { HWND hwnd; DWORD affinity; };
-    RemoteParams params = { hwnd, WDA_NONE };
-    auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
-                          &params, sizeof(params));
-    if (!r.success) {
-        logger::Warn(L"恢复WDA注入失败: " + r.error);
+    // 注入恢复（affinity=0）—— 仅当之前是注入方式隐蔽时才尝试
+    if (hw.injectOk) {
+        struct RemoteParams { HWND hwnd; DWORD affinity; };
+        RemoteParams params = { hwnd, WDA_NONE };
+        auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
+                              &params, sizeof(params));
+        if (!r.success) {
+            logger::Warn(L"恢复WDA注入失败: " + r.error);
+        }
     }
 
-    auto pfnCloak = GetDwmSetWindowAttribute();
-    if (pfnCloak) {
-        BOOL cloak = FALSE;
-        pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    // DWM Cloak 恢复（仅 cloakOk 时）
+    if (hw.cloakOk) {
+        auto pfnCloak = GetDwmSetWindowAttribute();
+        if (pfnCloak) {
+            BOOL cloak = FALSE;
+            pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        }
     }
 
     RestoreFromOffscreen(hwnd, hw);

@@ -54,7 +54,11 @@ static DWORD InjectAndSetAffinity(HANDLE hProcess, HWND hwnd, DWORD affinity, co
     if (!pRemoteMem) return 100 + GetLastError();
 
     SIZE_T written = 0;
-    WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathBytes, &written);
+    if (!WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathBytes, &written) ||
+        written != pathBytes) {
+        VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+        return 110 + GetLastError();
+    }
 
     HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
     auto pfnLoadLibrary = (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryW");
@@ -118,7 +122,12 @@ static DWORD InjectAndSetAffinity(HANDLE hProcess, HWND hwnd, DWORD affinity, co
         FreeLibrary(hLocalDll);
         return 500 + GetLastError();
     }
-    WriteProcessMemory(hProcess, pRemoteParams, &params, sizeof(params), &written);
+    if (!WriteProcessMemory(hProcess, pRemoteParams, &params, sizeof(params), &written) ||
+        written != sizeof(params)) {
+        VirtualFreeEx(hProcess, pRemoteParams, 0, MEM_RELEASE);
+        FreeLibrary(hLocalDll);
+        return 510 + GetLastError();
+    }
 
     hThread = CreateRemoteThread(hProcess, nullptr, 0,
         (LPTHREAD_START_ROUTINE)remoteProc, pRemoteParams, 0, nullptr);

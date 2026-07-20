@@ -96,10 +96,12 @@ static Result InjectViaHelper(DWORD pid, HWND hwnd,
     // 读取输出
     char buf[512] = {};
     DWORD bytesRead = 0;
+
+    WaitForSingleObject(pi.hProcess, 10000);
+
     ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, nullptr);
     buf[bytesRead] = '\0';
 
-    WaitForSingleObject(pi.hProcess, 10000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     CloseHandle(hReadPipe);
@@ -195,7 +197,13 @@ Result InjectAndCall(HWND hwnd,
     }
 
     SIZE_T bytesWritten = 0;
-    WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathBytes, &bytesWritten);
+    if (!WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathBytes, &bytesWritten) ||
+        bytesWritten != pathBytes) {
+        result.error = L"WriteProcessMemory(DLL路径) 失败: " + WSTR(GetLastError());
+        VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return result;
+    }
 
     // 第一步：远程调用 LoadLibraryW 加载 DLL
     HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
@@ -285,7 +293,14 @@ Result InjectAndCall(HWND hwnd,
             CloseHandle(hProcess);
             return result;
         }
-        WriteProcessMemory(hProcess, pRemoteParams, params, paramsSize, &bytesWritten);
+        if (!WriteProcessMemory(hProcess, pRemoteParams, params, paramsSize, &bytesWritten) ||
+            bytesWritten != paramsSize) {
+            result.error = L"WriteProcessMemory(参数) 失败: " + WSTR(GetLastError());
+            VirtualFreeEx(hProcess, pRemoteParams, 0, MEM_RELEASE);
+            FreeLibrary(hLocalDll);
+            CloseHandle(hProcess);
+            return result;
+        }
     }
 
     // 第五步：远程调用导出函数
