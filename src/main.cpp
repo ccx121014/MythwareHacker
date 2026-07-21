@@ -231,7 +231,10 @@ static void StopMonitor()
 {
     g_monitorRunning = false;
     if (g_hMonitorThread) {
-        WaitForSingleObject(g_hMonitorThread, 2000);
+        DWORD result = WaitForSingleObject(g_hMonitorThread, 500);
+        if (result != WAIT_OBJECT_0) {
+            TerminateThread(g_hMonitorThread, 0);
+        }
         CloseHandle(g_hMonitorThread);
         g_hMonitorThread = nullptr;
     }

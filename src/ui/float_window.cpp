@@ -149,7 +149,10 @@ static void StopTopmostThread()
 {
     g_topmostRunning = false;
     if (g_hTopmostThread) {
-        WaitForSingleObject(g_hTopmostThread, 1000);
+        DWORD result = WaitForSingleObject(g_hTopmostThread, 300);
+        if (result != WAIT_OBJECT_0) {
+            TerminateThread(g_hTopmostThread, 0);
+        }
         CloseHandle(g_hTopmostThread);
         g_hTopmostThread = nullptr;
     }
