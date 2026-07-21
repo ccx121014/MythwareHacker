@@ -23,7 +23,7 @@ void ShowTrayMenu(HWND hWnd)
     HMENU hMenu = CreatePopupMenu();
 
     // === 主界面入口 ===
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_SHOW_GUI, L"打开主界面");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_SHOW_GUI, L"打开主界面\tAlt+B");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
     // === 窗口隐蔽区 ===
@@ -53,23 +53,24 @@ void ShowTrayMenu(HWND hWnd)
     if (!status.version.empty()) stateText += L" v" + status.version;
     AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, stateText.c_str());
 
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_KILL_MYTHWARE,   L"强杀极域进程");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_SUSPEND_MYTHWARE,L"挂起（冻结）极域");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESUME_MYTHWARE, L"恢复极域");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_WIN,   L"广播窗口化");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_KILL_MYTHWARE,   L"强杀极域进程\tCtrl+Shift+K");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_SUSPEND_MYTHWARE,L"挂起（冻结）极域\tCtrl+Shift+M");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESUME_MYTHWARE, L"恢复极域\tCtrl+Shift+M");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_WIN,   L"广播窗口化\tCtrl+Shift+W");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_FULL,  L"广播全屏化");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT_BLACK,      L"退出黑屏安静");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT_BLACK,      L"退出黑屏安静\tCtrl+Shift+X");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
     // === 限制解除区 ===
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_UNBLOCK_NET, L"解除网络限制 (卸载 TDNetFilter)");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_UNBLOCK_USB, L"解除 U 盘限制 (卸载 TDFileFilter)");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESTORE_SYS, L"一键解禁系统程序\tCtrl+Shift+U");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
     // === 学生机房管理助手区 ===
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_KILL_CLASSROOM, L"杀掉学生机房管理助手");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_KILL_CLASSROOM, L"杀掉学生机房管理助手\tCtrl+Shift+C");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESTART_EXPLORER, L"重启资源管理器\tCtrl+Shift+R");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_CALC_PASSWORD,  L"动态密码计算器…");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESTORE_SYS,    L"一键解禁系统程序 (CMD/注册表/任务管理器)");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
     // === 窗口列表 ===

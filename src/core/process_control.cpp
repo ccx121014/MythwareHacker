@@ -404,4 +404,34 @@ bool IsBlackScreenActive()
     return data.hwnd != nullptr;
 }
 
+struct DemoteData { DWORD pid; };
+
+static BOOL CALLBACK DemoteMythwareProc(HWND hwnd, LPARAM lParam)
+{
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    DWORD windowPid;
+    GetWindowThreadProcessId(hwnd, &windowPid);
+    auto* data = reinterpret_cast<DemoteData*>(lParam);
+
+    if (windowPid != data->pid) return TRUE;
+
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    if (exStyle & WS_EX_TOPMOST) {
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_TOPMOST);
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    return TRUE;
+}
+
+void DemoteMythwareWindows()
+{
+    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    if (pid == 0) return;
+
+    DemoteData data = { pid };
+    EnumWindows(DemoteMythwareProc, reinterpret_cast<LPARAM>(&data));
+}
+
 } // namespace pctl

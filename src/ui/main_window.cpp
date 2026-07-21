@@ -30,6 +30,7 @@ static bool g_topmostRunning = false;
 static DWORD WINAPI TopmostThreadProc(LPVOID)
 {
     while (g_topmostRunning) {
+        pctl::DemoteMythwareWindows();
         if (g_hWnd && IsWindow(g_hWnd) && IsWindowVisible(g_hWnd)) {
             SetWindowPos(g_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);

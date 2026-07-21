@@ -18,12 +18,13 @@ static bool g_topmostRunning = false;
 static DWORD WINAPI TopmostThreadProc(LPVOID lpParameter)
 {
     while (g_topmostRunning) {
+        pctl::DemoteMythwareWindows();
         HWND hWnd = app::g_ctx.hWndFloat;
         if (hWnd && IsWindow(hWnd) && IsWindowVisible(hWnd)) {
             SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
-        Sleep(250);  // 短间隔维持置顶
+        Sleep(250);
     }
     return 0;
 }

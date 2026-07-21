@@ -167,6 +167,7 @@ inline bool IsWin10Build19041OrLater()
 #define ID_TRAY_PREVIEW          3014
 #define ID_TRAY_RESTORE_SYS      3015
 #define ID_TRAY_SHOW_GUI         3016
+#define ID_TRAY_RESTART_EXPLORER 3017
 #define ID_TRAY_EXIT             3999
 #define ID_TRAY_WINDOW_LIST_BASE 5000
 

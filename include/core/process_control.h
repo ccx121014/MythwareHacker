@@ -59,4 +59,8 @@ bool ExitBlackScreen();
 // 检查黑屏窗口是否正在显示（用于自动监控）
 bool IsBlackScreenActive();
 
+// 将极域相关窗口降级（取消置顶），使本程序窗口能正常置顶
+// 这不会影响极域功能，只是让它不再抢占前台
+void DemoteMythwareWindows();
+
 } // namespace pctl

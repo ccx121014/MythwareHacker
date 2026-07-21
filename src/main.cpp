@@ -350,6 +350,8 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         } else if (cmd == ID_TRAY_RESTORE_SYS) {
             auto r = mctl::UnblockSystemPrograms();
             MessageBoxW(hWnd, r.detail.c_str(), APP_TITLE, MB_OK | MB_ICONINFORMATION);
+        } else if (cmd == ID_TRAY_RESTART_EXPLORER) {
+            mctl::RestartExplorer();
         }
         else if (cmd == ID_TRAY_SHOW_GUI) {
             mainwin::Show();
