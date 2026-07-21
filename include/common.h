@@ -181,6 +181,6 @@ inline bool IsWin10Build19041OrLater()
 #define TRAYTIP_TIMER_ID         1
 #define TRAYTIP_INTERVAL_MS      3000
 #define PREVIEW_TIMER_ID         2
-#define PREVIEW_INTERVAL_MS      500
+#define PREVIEW_INTERVAL_MS      1000
 #define FLOAT_TIMER_ID           3
 #define FLOAT_INTERVAL_MS        1000

@@ -43,10 +43,16 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
         SetBkMode(hDC, TRANSPARENT);
         SetTextColor(hDC, RGB(255, 0, 0));
-        HFONT hFont = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                                  CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
-                                  DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
+        // 使用系统消息字体，避免硬编码字体在某些系统上不可用导致乱码
+        NONCLIENTMETRICSW ncm = {};
+        ncm.cbSize = sizeof(NONCLIENTMETRICSW);
+        HFONT hFont = nullptr;
+        if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0)) {
+            hFont = CreateFontIndirectW(&ncm.lfMessageFont);
+        }
+        if (!hFont) {
+            hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        }
         HFONT hOldFont = (HFONT)SelectObject(hDC, hFont);
 
         std::wstring tip = L"提示：此为 GDI 截图预览。按 Win+Shift+S 用系统截图工具可准确验证 WDA 效果。";
@@ -65,7 +71,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         if (g_hDCMem)   { DeleteDC(g_hDCMem);     g_hDCMem = nullptr; }
         g_width = 0;
         g_height = 0;
-        UpdateBitmap();
+        // 不立即重绘，等下一次 timer 触发，避免调整窗口大小时卡顿
         return 0;
 
     case WM_CLOSE:
@@ -123,62 +129,26 @@ void UpdateBitmap()
         SelectObject(g_hDCMem, g_hBitmap);
     }
 
-    RECT rcFill = { 0, 0, g_width, g_height };
-    FillRect(g_hDCMem, &rcFill, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    HDC hScreenDC = GetDC(nullptr);
+    if (!hScreenDC) return;
 
-    // 收集所有可见窗口（排除预览窗口自身）
-    std::vector<HWND> hwndOrder;
-    HWND h = GetWindow(GetDesktopWindow(), GW_CHILD);
-    while (h) {
-        if (h != app::g_ctx.hWndPreview && h != app::g_ctx.hWndFloat &&
-            IsWindowVisible(h)) {
-            hwndOrder.push_back(h);
-        }
-        h = GetWindow(h, GW_HWNDNEXT);
+    // 直接从屏幕 DC 复制，性能远超逐窗口 PrintWindow
+    SetStretchBltMode(g_hDCMem, HALFTONE);
+    StretchBlt(g_hDCMem, 0, 0, g_width, g_height,
+               hScreenDC, 0, 0, screenW, screenH, SRCCOPY);
+
+    // 用黑色填充预览窗口自身区域，避免画中画递归效果
+    RECT previewRc;
+    if (GetWindowRect(app::g_ctx.hWndPreview, &previewRc)) {
+        int fillX = (previewRc.left * g_width) / screenW;
+        int fillY = (previewRc.top  * g_height) / screenH;
+        int fillW = ((previewRc.right - previewRc.left) * g_width) / screenW;
+        int fillH = ((previewRc.bottom - previewRc.top) * g_height) / screenH;
+        RECT fillRc = { fillX, fillY, fillX + fillW, fillY + fillH };
+        FillRect(g_hDCMem, &fillRc, (HBRUSH)GetStockObject(BLACK_BRUSH));
     }
-    // GW_HWNDNEXT 顶层到底层，反转为底层到顶层
-    std::reverse(hwndOrder.begin(), hwndOrder.end());
 
-    for (HWND hw : hwndOrder) {
-        if (!IsWindowVisible(hw)) continue;
-
-        RECT wrc;
-        if (!GetWindowRect(hw, &wrc)) continue;
-
-        int winW = wrc.right - wrc.left;
-        int winH = wrc.bottom - wrc.top;
-        if (winW <= 0 || winH <= 0) continue;
-
-        HDC hWinDC = GetWindowDC(hw);
-        if (!hWinDC) continue;
-        HDC hMemDC = CreateCompatibleDC(hWinDC);
-        if (!hMemDC) { ReleaseDC(hw, hWinDC); continue; }
-        HBITMAP hBmp = CreateCompatibleBitmap(hWinDC, winW, winH);
-        if (!hBmp) { DeleteDC(hMemDC); ReleaseDC(hw, hWinDC); continue; }
-        HBITMAP hOldBmp = (HBITMAP)SelectObject(hMemDC, hBmp);
-
-        BOOL ok = PrintWindow(hw, hMemDC, PW_RENDERFULLCONTENT);
-        if (!ok) ok = PrintWindow(hw, hMemDC, 0);
-
-        int dstX = (wrc.left * g_width) / screenW;
-        int dstY = (wrc.top  * g_height) / screenH;
-        int dstW = (winW     * g_width) / screenW;
-        int dstH = (winH     * g_height) / screenH;
-
-        if (dstX < 0) dstX = 0;
-        if (dstY < 0) dstY = 0;
-        if (dstX + dstW > g_width)  dstW = g_width - dstX;
-        if (dstY + dstH > g_height) dstH = g_height - dstY;
-
-        SetStretchBltMode(g_hDCMem, HALFTONE);
-        StretchBlt(g_hDCMem, dstX, dstY, dstW, dstH,
-                   hMemDC, 0, 0, winW, winH, SRCCOPY);
-
-        SelectObject(hMemDC, hOldBmp);
-        DeleteObject(hBmp);
-        DeleteDC(hMemDC);
-        ReleaseDC(hw, hWinDC);
-    }
+    ReleaseDC(nullptr, hScreenDC);
 
     InvalidateRect(app::g_ctx.hWndPreview, nullptr, FALSE);
 }
