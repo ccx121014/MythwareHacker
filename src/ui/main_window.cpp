@@ -11,6 +11,8 @@
 #include "utils/window_utils.h"
 #include <cstdio>
 #include <vector>
+#include <commctrl.h>
+#pragma comment(lib, "comctl32.lib")
 
 namespace mainwin {
 
@@ -57,6 +59,12 @@ static void StopTopmostThread()
 
 static const int WIN_W = 680;
 static const int WIN_H = 420;
+
+static BOOL CALLBACK SetFontEnumProc(HWND hwnd, LPARAM lParam)
+{
+    SendMessageW(hwnd, WM_SETFONT, (WPARAM)lParam, TRUE);
+    return TRUE;
+}
 
 static void DoCalcPassword(HWND hWnd)
 {
@@ -240,10 +248,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
         // 设置字体
         if (g_hFont) {
-            EnumChildWindows(hWnd, [](HWND hwnd, LPARAM lParam) -> BOOL {
-                SendMessageW(hwnd, WM_SETFONT, (WPARAM)lParam, TRUE);
-                return TRUE;
-            }, (LPARAM)g_hFont);
+            EnumChildWindows(hWnd, &mainwin::SetFontEnumProc, (LPARAM)g_hFont);
         }
 
         SetTimer(hWnd, IDC_GUI_TIMER, 3000, nullptr);
