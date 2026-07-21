@@ -7,23 +7,24 @@
 #include "core/driver_control.h"
 #include "core/mythware_control.h"
 #include "core/password_calc.h"
+#include "core/self_protect.h"
 #include "utils/log.h"
 #include "utils/window_utils.h"
 #include <cstdio>
 #include <vector>
-#include <commctrl.h>
-#pragma comment(lib, "comctl32.lib")
 
 namespace mainwin {
 
-static HWND g_hWnd     = nullptr;
-static HWND g_hList    = nullptr;
-static HWND g_hStatus  = nullptr;
-static HWND g_hVersion = nullptr;
-static HWND g_hDate    = nullptr;
-static HWND g_hPcName  = nullptr;
-static HWND g_hResult  = nullptr;
-static HFONT g_hFont   = nullptr;
+static HWND g_hWnd       = nullptr;
+static HWND g_hList      = nullptr;
+static HWND g_hStatusText= nullptr;
+static HWND g_hArchPwd   = nullptr;
+static HWND g_hAutoStart = nullptr;
+static HWND g_hVersion   = nullptr;
+static HWND g_hDate      = nullptr;
+static HWND g_hPcName    = nullptr;
+static HWND g_hResult    = nullptr;
+static HFONT g_hFont     = nullptr;
 static HANDLE g_hTopmostThread = nullptr;
 static bool g_topmostRunning = false;
 
@@ -233,11 +234,22 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
             L + 222, y + 50, totalW - 232, 48, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
 
-        // 底部状态栏
-        g_hStatus = CreateWindowW(STATUSCLASSNAMEW, L"等待操作",
-            WS_CHILD | WS_VISIBLE, 0, 0, 0, 0, hWnd, (HMENU)(INT_PTR)1005, app::g_ctx.hInst, nullptr);
-        int pts[2] = {420, -1};
-        SendMessageW(g_hStatus, SB_SETPARTS, 2, (LPARAM)pts);
+        // 底部状态行 + 开机自启动
+        y = 395;
+        g_hStatusText = CreateWindowW(L"STATIC", L"极域: 未运行",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            L, y, 280, 20, hWnd, (HMENU)(INT_PTR)IDC_STATIC_STATUS, app::g_ctx.hInst, nullptr);
+
+        g_hAutoStart = CreateWindowW(L"BUTTON", L"开机自启动",
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            L + 290, y - 1, 100, 20, hWnd, (HMENU)(INT_PTR)IDC_CHK_AUTOSTART, app::g_ctx.hInst, nullptr);
+        if (spctl::IsAutoStartEnabled()) {
+            SendMessageW(g_hAutoStart, BM_SETCHECK, BST_CHECKED, 0);
+        }
+
+        g_hArchPwd = CreateWindowW(L"STATIC", L"",
+            WS_CHILD | WS_VISIBLE | SS_RIGHT,
+            L + 400, y, totalW - 400, 20, hWnd, (HMENU)(INT_PTR)1006, app::g_ctx.hInst, nullptr);
 
         // 设置字体
         if (g_hFont) {
@@ -383,6 +395,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             RefreshWindowList();
             AppendLog(L"已刷新状态");
         }
+        else if (cmd == IDC_CHK_AUTOSTART) {
+            bool enable = (SendMessageW(g_hAutoStart, BM_GETCHECK, 0, 0) == BST_CHECKED);
+            spctl::SetAutoStart(enable);
+            AppendLog(enable ? L"已设置开机自启动" : L"已取消开机自启动");
+        }
         return 0;
     }
 
@@ -470,8 +487,6 @@ bool IsVisible()
 
 void RefreshStatus()
 {
-    if (!g_hStatus) return;
-
     auto st = pctl::GetMythwareStatus();
     std::wstring stateText;
     switch (st.state) {
@@ -483,12 +498,12 @@ void RefreshStatus()
     if (st.pid) stateText += L"  PID " + WSTR(st.pid);
     if (!st.version.empty()) stateText += L"  v" + st.version;
 
-    SendMessageW(g_hStatus, SB_SETTEXTW, 0, (LPARAM)stateText.c_str());
+    if (g_hStatusText) SetWindowTextW(g_hStatusText, stateText.c_str());
 
     std::wstring right = common::IsSelf64Bit() ? L"64位" : L"32位";
     std::wstring pwd = pwcalc::ReadMythwarePassword();
     if (!pwd.empty()) right += L"  |  密码: " + pwd;
-    SendMessageW(g_hStatus, SB_SETTEXTW, 1, (LPARAM)right.c_str());
+    if (g_hArchPwd) SetWindowTextW(g_hArchPwd, right.c_str());
 }
 
 void RefreshWindowList()
@@ -505,9 +520,6 @@ void RefreshWindowList()
 void AppendLog(const std::wstring& text)
 {
     logger::Info(text);
-    if (g_hStatus) {
-        SendMessageW(g_hStatus, SB_SETTEXTW, 0, (LPARAM)text.c_str());
-    }
 }
 
 } // namespace mainwin

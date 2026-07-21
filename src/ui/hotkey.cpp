@@ -7,6 +7,7 @@
 #include "core/process_control.h"
 #include "core/mythware_control.h"
 #include "core/driver_control.h"
+#include "core/window_hide.h"
 #include "utils/log.h"
 
 namespace hotkey {
@@ -59,7 +60,7 @@ bool Handle(WPARAM wParam)
         mainwin::Show();
         return true;
     case ID_HOTKEY_HIDE_CURRENT:
-        mainwin::Toggle();
+        whide::ToggleCurrent();
         return true;
     case ID_HOTKEY_SELECT:
         app::g_ctx.selectMode = true;

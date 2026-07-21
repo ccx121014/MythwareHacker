@@ -39,6 +39,7 @@
 #define IDC_STATIC_STATUS        10060
 #define IDC_EDIT_LOG             10061
 #define IDC_BTN_REFRESH          10070
+#define IDC_CHK_AUTOSTART        10080
 #define IDC_GUI_TIMER            200
 
 namespace mainwin {
