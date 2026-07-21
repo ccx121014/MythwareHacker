@@ -49,6 +49,13 @@ bool BroadcastToWindowed();
 // 广播全屏化（恢复全屏）
 bool BroadcastToFullscreen();
 
+// 广播窗口置顶开关
+// enable=true 设为置顶，enable=false 取消置顶
+bool SetBroadcastTopmost(bool enable);
+
+// 获取广播窗口当前是否置顶
+bool IsBroadcastTopmost();
+
 // 退出黑屏安静（4 级递进）
 //   级别1：隐藏黑屏窗口
 //   级别2：最小化

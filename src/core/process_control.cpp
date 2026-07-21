@@ -240,6 +240,7 @@ bool ResumeMythware()
 
 // 内部：查找极域广播窗口
 // 极域广播窗口类名通常是 "T.TopDomain.Student.BroadcastForm" 或类似
+// 同时查找多种可能的窗口类名
 struct FindBroadcastData { HWND hwnd; };
 
 static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
@@ -248,19 +249,35 @@ static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
     if (!IsWindowVisible(hwnd)) return TRUE;
 
     wchar_t cls[256] = {};
+    wchar_t title[256] = {};
     GetClassNameW(hwnd, cls, 256);
+    GetWindowTextW(hwnd, title, 256);
 
-    if (wcsstr(cls, L"TopDomain") || wcsstr(cls, L"Broadcast") ||
-        wcsstr(cls, L"Mythware")) {
-        RECT rc;
-        GetWindowRect(hwnd, &rc);
-        int screenW = GetSystemMetrics(SM_CXSCREEN);
-        int screenH = GetSystemMetrics(SM_CYSCREEN);
-        if (rc.right - rc.left >= screenW * 0.95 &&
-            rc.bottom - rc.top >= screenH * 0.95) {
-            d->hwnd = hwnd;
-            return FALSE;
-        }
+    // 极域广播窗口类名特征：
+    // - T.TopDomain.Student.BroadcastForm
+    // - TopDomain
+    // - Broadcast
+    // 或者标题包含"广播"
+    bool isBroadcast = wcsstr(cls, L"TopDomain") ||
+                        wcsstr(cls, L"Broadcast") ||
+                        wcsstr(cls, L"Mythware") ||
+                        wcsstr(title, L"广播") ||
+                        wcsstr(title, L"Broad");
+
+    if (!isBroadcast) return TRUE;
+
+    // 检查是否接近全屏（广播窗口通常是全屏或接近全屏）
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    int screenW = GetSystemMetrics(SM_CXSCREEN);
+    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    int winW = rc.right - rc.left;
+    int winH = rc.bottom - rc.top;
+
+    // 窗口至少占屏幕 70% 才认为是广播窗口
+    if (winW >= screenW * 0.7 && winH >= screenH * 0.7) {
+        d->hwnd = hwnd;
+        return FALSE;
     }
     return TRUE;
 }
@@ -280,34 +297,54 @@ bool BroadcastToWindowed()
         return false;
     }
 
-    // 方案1：向广播窗口发送 WM_COMMAND 模拟点击"窗口化"按钮（MythwareToolkit 方式）
-    // 极域广播窗口的窗口化按钮命令 ID 通常为 1004
-    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1004, BN_CLICKED), 0);
-    Sleep(300);
+    wchar_t cls[256] = {};
+    GetClassNameW(hwnd, cls, 256);
+    logger::Info(L"找到广播窗口: 类名=" + std::wstring(cls));
 
-    // 检查窗口是否已经变小（不再是全屏）
-    RECT rc;
-    GetWindowRect(hwnd, &rc);
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    if (rc.right - rc.left < screenW * 0.95 || rc.bottom - rc.top < screenH * 0.95) {
-        logger::Info(L"已通过 WM_COMMAND 将广播窗口化");
-        return true;
+    // 方案1：先尝试发送 WM_COMMAND 模拟点击"窗口化"按钮
+    // 极域广播窗口的窗口化按钮命令 ID 可能为 1004 或其他
+    // 尝试多个可能的命令 ID
+    const int cmdIds[] = {1004, 1005, 1006, 1003, 1002, 1001};
+    for (int id : cmdIds) {
+        PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), 0);
+        Sleep(200);
+
+        // 检查窗口是否已经变小
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+        if (rc.right - rc.left < screenW * 0.9 || rc.bottom - rc.top < screenH * 0.9) {
+            logger::Info(L"已通过 WM_COMMAND(ID=" + WSTR(id) + L") 将广播窗口化");
+            return true;
+        }
     }
 
-    // 方案2：直接修改窗口样式（回退方案）
-    int w = screenW / 2;
-    int h = screenH / 2;
-    int x = (screenW - w) / 2;
-    int y = (screenH - h) / 2;
-
+    // 方案2：直接修改窗口样式
+    // 先获取当前样式
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+
+    // 移除 WS_POPUP（全屏弹窗样式），添加 WS_OVERLAPPEDWINDOW（标准窗口样式）
     style &= ~WS_POPUP;
-    style |= WS_OVERLAPPEDWINDOW | WS_VISIBLE;
+    style |= WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     SetWindowLong(hwnd, GWL_STYLE, style);
 
+    // 取消 WS_EX_TOPMOST 如果有
+    exStyle &= ~WS_EX_TOPMOST;
+    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+
+    // 设置窗口位置和大小（屏幕中央，50% 大小）
+    int w = screenW * 0.6;
+    int h = screenH * 0.7;
+    int x = (screenW - w) / 2;
+    int y = (screenH - h) / 2;
     SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+
+    // 强制刷新
+    SetForegroundWindow(hwnd);
+    InvalidateRect(hwnd, nullptr, TRUE);
 
     logger::Info(L"已通过修改样式将广播窗口化");
     return true;
@@ -330,6 +367,37 @@ bool BroadcastToFullscreen()
 
     logger::Info(L"已将广播全屏化");
     return true;
+}
+
+bool SetBroadcastTopmost(bool enable)
+{
+    HWND hwnd = FindBroadcastWindow();
+    if (!hwnd) {
+        logger::Warn(L"未找到广播窗口，无法设置置顶");
+        return false;
+    }
+
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    if (enable) {
+        exStyle |= WS_EX_TOPMOST;
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        logger::Info(L"已将广播窗口设为置顶");
+    } else {
+        exStyle &= ~WS_EX_TOPMOST;
+        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        logger::Info(L"已取消广播窗口置顶");
+    }
+    return true;
+}
+
+bool IsBroadcastTopmost()
+{
+    HWND hwnd = FindBroadcastWindow();
+    if (!hwnd) return false;
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    return (exStyle & WS_EX_TOPMOST) != 0;
 }
 
 struct BlackScreenData { HWND hwnd; };

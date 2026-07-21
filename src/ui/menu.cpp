@@ -58,6 +58,10 @@ void ShowTrayMenu(HWND hWnd)
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESUME_MYTHWARE, L"恢复极域\tCtrl+Shift+M");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_WIN,   L"广播窗口化\tCtrl+Shift+W");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_FULL,  L"广播全屏化");
+    // 广播置顶开关（带复选框）
+    bool isTopmost = pctl::IsBroadcastTopmost();
+    AppendMenuW(hMenu, MF_STRING | (isTopmost ? MF_CHECKED : 0), ID_TRAY_BROADCAST_TOPMOST,
+        L"广播窗口置顶");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT_BLACK,      L"退出黑屏安静\tCtrl+Shift+X");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 

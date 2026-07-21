@@ -246,22 +246,28 @@ KillResult KillClassroomHelper()
 {
     KillResult result = {};
 
-    // 1. 先杀固定进程名
+    // 重要：必须先停止服务，再杀进程！
+    // 否则服务监控会自动重启进程
+
+    // 1. 先停止并删除 zmserv 服务（防止服务重启进程）
+    StopAndDeleteService(L"zmserv");
+
+    // 等待服务完全停止
+    Sleep(500);
+
+    // 2. 再杀固定进程名（守护进程和主进程）
     for (const auto& name : CLASSROOM_PROCESS_NAMES) {
         result.killedCount += KillProcessByName(name, result.killedNames);
     }
 
-    // 2. 生成动态进程名并杀掉（v9.x ~ v12.x）
+    // 3. 生成动态进程名并杀掉（v9.x ~ v12.x）
     auto dynamicNames = GenerateDynamicProcessNames();
     for (const auto& name : dynamicNames) {
         result.killedCount += KillProcessByName(name, result.killedNames);
     }
 
-    // 3. 扫描回退
+    // 4. 扫描回退
     result.killedCount += ScanAndKillDynamicProcesses(result.killedNames);
-
-    // 4. 停止并删除 zmserv 服务
-    StopAndDeleteService(L"zmserv");
 
     logger::Info(L"共杀掉 " + WSTR(result.killedCount) + L" 个助手进程");
     return result;

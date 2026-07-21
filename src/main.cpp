@@ -326,6 +326,9 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             pctl::ResumeMythware();
         } else if (cmd == ID_TRAY_BROADCAST_WIN) {
             pctl::BroadcastToWindowed();
+        } else if (cmd == ID_TRAY_BROADCAST_TOPMOST) {
+            bool current = pctl::IsBroadcastTopmost();
+            pctl::SetBroadcastTopmost(!current);
         } else if (cmd == ID_TRAY_BROADCAST_FULL) {
             pctl::BroadcastToFullscreen();
         } else if (cmd == ID_TRAY_EXIT_BLACK) {
