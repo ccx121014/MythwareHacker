@@ -434,4 +434,60 @@ void DemoteMythwareWindows()
     EnumWindows(DemoteMythwareProc, reinterpret_cast<LPARAM>(&data));
 }
 
+bool UnblockInputInMythware()
+{
+    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    if (pid == 0) return false;
+
+    HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION, FALSE, pid);
+    if (!hProcess) {
+        logger::Warn(L"UnblockInput: OpenProcess 失败 PID=" + WSTR(pid) + L" err=" + WSTR(GetLastError()));
+        return false;
+    }
+
+    // 获取本地 BlockInput 地址和 user32 基址
+    HMODULE hUser32 = GetModuleHandleA("user32.dll");
+    FARPROC pBlockInput = GetProcAddress(hUser32, "BlockInput");
+    if (!pBlockInput) {
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    // 计算远程进程中 BlockInput 的地址
+    // user32.dll 是系统 DLL，通常在所有进程中基址相同
+    // 为保险，通过 EnumProcessModules 获取远程基址
+    FARPROC remoteBlockInput = pBlockInput;  // 默认假设基址相同
+    HMODULE hMods[1024] = {};
+    DWORD cbNeeded = 0;
+    if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded)) {
+        for (DWORD i = 0; i < (cbNeeded / sizeof(HMODULE)); i++) {
+            wchar_t szModName[MAX_PATH] = {};
+            if (GetModuleFileNameExW(hProcess, hMods[i], szModName, MAX_PATH)) {
+                if (wcsstr(szModName, L"user32.dll") != nullptr) {
+                    remoteBlockInput = reinterpret_cast<FARPROC>(
+                        reinterpret_cast<UINT_PTR>(hMods[i]) +
+                        (reinterpret_cast<UINT_PTR>(pBlockInput) - reinterpret_cast<UINT_PTR>(hUser32)));
+                    break;
+                }
+            }
+        }
+    }
+
+    // 在极域进程内创建远程线程调用 BlockInput(FALSE)
+    HANDLE hThread = CreateRemoteThread(hProcess, nullptr, 0,
+        reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteBlockInput),
+        reinterpret_cast<LPVOID>(FALSE), 0, nullptr);
+    if (!hThread) {
+        logger::Warn(L"UnblockInput: CreateRemoteThread 失败 err=" + WSTR(GetLastError()));
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    WaitForSingleObject(hThread, 1000);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+    logger::Info(L"已在极域进程内解除 BlockInput");
+    return true;
+}
+
 } // namespace pctl

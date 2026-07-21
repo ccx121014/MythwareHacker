@@ -17,6 +17,9 @@ static HWND  g_hMainWnd = nullptr;
 static bool  g_ctrlDown = false;
 static bool  g_shiftDown = false;
 static bool  g_altDown = false;
+static bool  g_hookRunning = false;
+static HANDLE g_hHookThread = nullptr;
+static HANDLE g_hBlockInputThread = nullptr;
 
 // Ctrl+Shift 快捷键映射表
 static struct { UINT vk; int id; const wchar_t* name; } g_ctrlShiftKeys[] = {
@@ -72,14 +75,18 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
                 break;
             default: {
                 if (isDown && !(kbd->flags & LLKHF_UP)) {
+                    // Ctrl+Shift 组合
                     if (g_ctrlDown && g_shiftDown) {
                         for (auto& k : g_ctrlShiftKeys) {
                             if (kbd->vkCode == k.vk) {
                                 ExecuteHotkey(k.id);
+                                // 返回 1 阻止消息继续传递，
+                                // 这样极域的钩子收不到这个按键
                                 return 1;
                             }
                         }
                     }
+                    // Alt 组合
                     if (g_altDown && !g_ctrlDown) {
                         for (auto& k : g_altKeys) {
                             if (kbd->vkCode == k.vk) {
@@ -97,21 +104,79 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
     return CallNextHookEx(g_hLowLevelHook, nCode, wParam, lParam);
 }
 
+static void DoInstallHook()
+{
+    if (g_hLowLevelHook) {
+        UnhookWindowsHookEx(g_hLowLevelHook);
+        g_hLowLevelHook = nullptr;
+    }
+    g_hLowLevelHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
+                                         GetModuleHandleW(nullptr), 0);
+}
+
+// 钩子竞争线程：定期重新安装钩子，确保我们的钩子在钩子链最前面
+// （极域也会安装键盘钩子，后安装的钩子先被调用）
+static DWORD WINAPI HookCompeteThreadProc(LPVOID)
+{
+    while (g_hookRunning) {
+        // 每 300ms 重新安装一次钩子，确保在极域钩子之后安装
+        // 这样我们的钩子在最前面，优先处理快捷键
+        DoInstallHook();
+        Sleep(300);
+    }
+    return 0;
+}
+
+// BlockInput 绕过线程：定期在极域进程内解除键盘阻塞
+static DWORD WINAPI BlockInputBypassThreadProc(LPVOID)
+{
+    while (g_hookRunning) {
+        // 同时尝试两种解除方式
+        // 1. 在极域进程内远程调用 BlockInput(FALSE)
+        pctl::UnblockInputInMythware();
+        // 2. 自己也尝试调用（某些情况下可能有效）
+        BlockInput(FALSE);
+        Sleep(200);
+    }
+    return 0;
+}
+
 bool InstallLowLevelHook()
 {
     if (g_hLowLevelHook) return true;
-    g_hLowLevelHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
-                                         GetModuleHandleW(nullptr), 0);
+    DoInstallHook();
     if (!g_hLowLevelHook) {
         logger::Warn(L"低级键盘钩子安装失败: " + WSTR(GetLastError()));
         return false;
     }
     logger::Info(L"低级键盘钩子已安装（绕过极域键盘禁用）");
+
+    // 启动钩子竞争线程
+    if (!g_hookRunning) {
+        g_hookRunning = true;
+        g_hHookThread = CreateThread(nullptr, 0, HookCompeteThreadProc, nullptr, 0, nullptr);
+        g_hBlockInputThread = CreateThread(nullptr, 0, BlockInputBypassThreadProc, nullptr, 0, nullptr);
+    }
     return true;
 }
 
 void UninstallLowLevelHook()
 {
+    g_hookRunning = false;
+
+    if (g_hHookThread) {
+        WaitForSingleObject(g_hHookThread, 500);
+        TerminateThread(g_hHookThread, 0);
+        CloseHandle(g_hHookThread);
+        g_hHookThread = nullptr;
+    }
+    if (g_hBlockInputThread) {
+        WaitForSingleObject(g_hBlockInputThread, 500);
+        TerminateThread(g_hBlockInputThread, 0);
+        CloseHandle(g_hBlockInputThread);
+        g_hBlockInputThread = nullptr;
+    }
+
     if (g_hLowLevelHook) {
         UnhookWindowsHookEx(g_hLowLevelHook);
         g_hLowLevelHook = nullptr;

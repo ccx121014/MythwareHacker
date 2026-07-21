@@ -63,4 +63,8 @@ bool IsBlackScreenActive();
 // 这不会影响极域功能，只是让它不再抢占前台
 void DemoteMythwareWindows();
 
+// 在极域进程内创建远程线程调用 BlockInput(FALSE)，
+// 绕过极域通过 BlockInput 禁用键盘。返回是否成功。
+bool UnblockInputInMythware();
+
 } // namespace pctl
