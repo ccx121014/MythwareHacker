@@ -23,7 +23,6 @@ static HWND g_hVersion = nullptr;
 static HWND g_hDate    = nullptr;
 static HWND g_hPcName  = nullptr;
 static HWND g_hResult  = nullptr;
-static HWND g_hPwdEdit = nullptr;
 static HFONT g_hFont   = nullptr;
 static HANDLE g_hTopmostThread = nullptr;
 static bool g_topmostRunning = false;
@@ -58,7 +57,7 @@ static void StopTopmostThread()
 }
 
 static const int WIN_W = 680;
-static const int WIN_H = 420;
+static const int WIN_H = 470;
 
 static BOOL CALLBACK SetFontEnumProc(HWND hwnd, LPARAM lParam)
 {
@@ -134,14 +133,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         const int totalW = WIN_W - L * 2;
         int y;
 
-        // 顶部：极域密码（右上角）
-        CreateWindowW(L"STATIC", L"极域密码:", WS_CHILD | WS_VISIBLE | SS_RIGHT,
-            WIN_W - L - 210, 9, 70, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
-        g_hPwdEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_READONLY,
-            WIN_W - L - 135, 7, 135, 22, hWnd, (HMENU)(INT_PTR)1003, app::g_ctx.hInst, nullptr);
-
-        y = 38;
+        y = 10;
         // 左侧：极域控制
         CreateWindowW(L"BUTTON", L"极域控制", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
             L, y, LW, 140, hWnd, nullptr, app::g_ctx.hInst, nullptr);
@@ -173,10 +165,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         CreateWindowW(L"BUTTON", L"一键解除全部", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             R + 10 + btnW + 8, y + 90, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_ALL, app::g_ctx.hInst, nullptr);
 
-        y = 190;
+        y = 162;
         // 窗口隐蔽
         CreateWindowW(L"BUTTON", L"窗口隐蔽", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, totalW, 100, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, totalW, 105, hWnd, nullptr, app::g_ctx.hInst, nullptr);
 
         g_hList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
@@ -203,10 +195,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         CreateWindowW(L"BUTTON", L"退出黑屏", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             sbStartX + 3 * (sbW + sbGap), y + 50, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_EXIT_BLACK, app::g_ctx.hInst, nullptr);
 
-        y = 300;
+        y = 278;
         // 密码计算器
         CreateWindowW(L"BUTTON", L"动态密码计算器", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, totalW, 80, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, totalW, 110, hWnd, nullptr, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"STATIC", L"版本号:", WS_CHILD | WS_VISIBLE,
             L + 14, y + 22, 50, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
@@ -232,13 +224,13 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             L + 368, y + 20, 140, 22, hWnd, (HMENU)(INT_PTR)IDC_EDIT_PCNAME, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"计算密码", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 14, y + 48, 88, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_CALC_PASSWORD, app::g_ctx.hInst, nullptr);
+            L + 14, y + 50, 88, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_CALC_PASSWORD, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"读取极域密码", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 106, y + 48, 108, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_READ_MYTH_PWD, app::g_ctx.hInst, nullptr);
+            L + 106, y + 50, 108, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_READ_MYTH_PWD, app::g_ctx.hInst, nullptr);
 
         g_hResult = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
-            L + 222, y + 48, totalW - 232, 26, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
+            L + 222, y + 50, totalW - 232, 48, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
 
         // 底部状态栏
         g_hStatus = CreateWindowW(STATUSCLASSNAMEW, L"等待操作",
@@ -493,12 +485,9 @@ void RefreshStatus()
     SendMessageW(g_hStatus, SB_SETTEXTW, 0, (LPARAM)stateText.c_str());
 
     std::wstring right = common::IsSelf64Bit() ? L"64位" : L"32位";
+    std::wstring pwd = pwcalc::ReadMythwarePassword();
+    if (!pwd.empty()) right += L"  |  密码: " + pwd;
     SendMessageW(g_hStatus, SB_SETTEXTW, 1, (LPARAM)right.c_str());
-
-    if (g_hPwdEdit) {
-        std::wstring pwd = pwcalc::ReadMythwarePassword();
-        if (!pwd.empty()) SetWindowTextW(g_hPwdEdit, pwd.c_str());
-    }
 }
 
 void RefreshWindowList()
