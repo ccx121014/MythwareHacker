@@ -62,7 +62,7 @@ static void StopTopmostThread()
 }
 
 static const int WIN_W = 680;
-static const int WIN_H = 500;
+static const int WIN_H = 540;
 
 static BOOL CALLBACK SetFontEnumProc(HWND hwnd, LPARAM lParam)
 {
@@ -203,7 +203,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         y = 278;
         // 密码计算器
         CreateWindowW(L"BUTTON", L"动态密码计算器", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, totalW, 130, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, totalW, 150, hWnd, nullptr, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"STATIC", L"版本号:", WS_CHILD | WS_VISIBLE,
             L + 14, y + 22, 50, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
@@ -229,30 +229,30 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             L + 368, y + 20, 140, 22, hWnd, (HMENU)(INT_PTR)IDC_EDIT_PCNAME, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"计算密码", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 14, y + 50, 88, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_CALC_PASSWORD, app::g_ctx.hInst, nullptr);
+            L + 14, y + 52, 88, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_CALC_PASSWORD, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"读取极域密码", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 106, y + 50, 108, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_READ_MYTH_PWD, app::g_ctx.hInst, nullptr);
+            L + 106, y + 52, 108, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_READ_MYTH_PWD, app::g_ctx.hInst, nullptr);
 
         g_hResult = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
-            L + 222, y + 50, totalW - 232, 72, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
+            L + 222, y + 52, totalW - 232, 88, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
 
         // 底部状态行 + 开机自启动
-        y = 395;
+        const int statusY = 435;
         g_hStatusText = CreateWindowW(L"STATIC", L"极域: 未运行",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            L, y, 280, 20, hWnd, (HMENU)(INT_PTR)IDC_STATIC_STATUS, app::g_ctx.hInst, nullptr);
+            L, statusY, 280, 20, hWnd, (HMENU)(INT_PTR)IDC_STATIC_STATUS, app::g_ctx.hInst, nullptr);
 
         g_hAutoStart = CreateWindowW(L"BUTTON", L"开机自启动",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            L + 290, y - 1, 100, 20, hWnd, (HMENU)(INT_PTR)IDC_CHK_AUTOSTART, app::g_ctx.hInst, nullptr);
+            L + 290, statusY, 100, 20, hWnd, (HMENU)(INT_PTR)IDC_CHK_AUTOSTART, app::g_ctx.hInst, nullptr);
         if (spctl::IsAutoStartEnabled()) {
             SendMessageW(g_hAutoStart, BM_SETCHECK, BST_CHECKED, 0);
         }
 
         g_hArchPwd = CreateWindowW(L"STATIC", L"",
             WS_CHILD | WS_VISIBLE | SS_RIGHT,
-            L + 400, y, totalW - 400, 20, hWnd, (HMENU)(INT_PTR)1006, app::g_ctx.hInst, nullptr);
+            L + 400, statusY, totalW - 400, 20, hWnd, (HMENU)(INT_PTR)1006, app::g_ctx.hInst, nullptr);
 
         // 设置字体（状态栏需单独设置，EnumChildWindows 无法枚举到）
         if (g_hFont) {
