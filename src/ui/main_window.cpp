@@ -58,7 +58,7 @@ static void StopTopmostThread()
 }
 
 static const int WIN_W = 680;
-static const int WIN_H = 470;
+static const int WIN_H = 500;
 
 static BOOL CALLBACK SetFontEnumProc(HWND hwnd, LPARAM lParam)
 {
@@ -199,7 +199,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         y = 278;
         // 密码计算器
         CreateWindowW(L"BUTTON", L"动态密码计算器", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, totalW, 110, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, totalW, 130, hWnd, nullptr, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"STATIC", L"版本号:", WS_CHILD | WS_VISIBLE,
             L + 14, y + 22, 50, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
@@ -231,7 +231,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
         g_hResult = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
-            L + 222, y + 50, totalW - 232, 48, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
+            L + 222, y + 50, totalW - 232, 72, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
 
         // 底部状态栏
         g_hStatus = CreateWindowW(STATUSCLASSNAMEW, L"等待操作",
@@ -239,9 +239,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         int pts[2] = {420, -1};
         SendMessageW(g_hStatus, SB_SETPARTS, 2, (LPARAM)pts);
 
-        // 设置字体
+        // 设置字体（状态栏需单独设置，EnumChildWindows 无法枚举到）
         if (g_hFont) {
             EnumChildWindows(hWnd, &mainwin::SetFontEnumProc, (LPARAM)g_hFont);
+            SendMessageW(g_hStatus, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         }
 
         SetTimer(hWnd, IDC_GUI_TIMER, 3000, nullptr);
