@@ -61,8 +61,8 @@ static void StopTopmostThread()
     }
 }
 
-static const int WIN_W = 680;
-static const int WIN_H = 540;
+static const int WIN_W = 620;
+static const int WIN_H = 460;
 
 static BOOL CALLBACK SetFontEnumProc(HWND hwnd, LPARAM lParam)
 {
@@ -130,129 +130,132 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Microsoft YaHei");
 
-        const int L = 12;
-        const int GAP = 12;
-        const int LW = 320;
+        const int L = 10;
+        const int GAP = 8;
+        const int LW = 300;
         const int RW = WIN_W - L - LW - GAP - L;
         const int R = L + LW + GAP;
         const int totalW = WIN_W - L * 2;
+        const int btnH = 24;
+        const int smallGap = 4;
         int y;
 
-        y = 10;
+        y = 8;
         // 左侧：极域控制
         CreateWindowW(L"BUTTON", L"极域控制", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, LW, 140, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, LW, 120, hWnd, nullptr, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"杀掉机房助手", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 10, y + 22, LW - 20, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_KILL_CLASSROOM, app::g_ctx.hInst, nullptr);
+            L + 8, y + 20, LW - 16, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_KILL_CLASSROOM, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"杀掉极域", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 10, y + 54, LW - 20, 32, hWnd, (HMENU)(INT_PTR)IDC_BTN_KILL_MYTH, app::g_ctx.hInst, nullptr);
-        CreateWindowW(L"BUTTON", L"挂起极域", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 10, y + 92, (LW - 20 - 8) / 3, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_SUSPEND, app::g_ctx.hInst, nullptr);
-        CreateWindowW(L"BUTTON", L"恢复极域", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 10 + (LW - 20 - 8) / 3 + 4, y + 92, (LW - 20 - 8) / 3, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESUME, app::g_ctx.hInst, nullptr);
-        CreateWindowW(L"BUTTON", L"启动极域", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 10 + ((LW - 20 - 8) / 3 + 4) * 2, y + 92, (LW - 20 - 8) / 3, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_START_MYTH, app::g_ctx.hInst, nullptr);
+            L + 8, y + 48, LW - 16, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_KILL_MYTH, app::g_ctx.hInst, nullptr);
+        const int smallBtnW = (LW - 16 - smallGap * 2) / 3;
+        CreateWindowW(L"BUTTON", L"挂起", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            L + 8, y + 78, smallBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_SUSPEND, app::g_ctx.hInst, nullptr);
+        CreateWindowW(L"BUTTON", L"恢复", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            L + 8 + smallBtnW + smallGap, y + 78, smallBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESUME, app::g_ctx.hInst, nullptr);
+        CreateWindowW(L"BUTTON", L"启动", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            L + 8 + (smallBtnW + smallGap) * 2, y + 78, smallBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_START_MYTH, app::g_ctx.hInst, nullptr);
 
         // 右侧：高级工具
-        const int btnW = (RW - 20 - 8) / 2;
+        const int advBtnW = (RW - 16 - smallGap) / 2;
         CreateWindowW(L"BUTTON", L"高级工具", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            R, y, RW, 140, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            R, y, RW, 120, hWnd, nullptr, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"解禁系统程序", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            R + 10, y + 22, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTORE_SYS, app::g_ctx.hInst, nullptr);
+            R + 8, y + 20, advBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTORE_SYS, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"重启资源管理器", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            R + 10 + btnW + 8, y + 22, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTART_EXPLORER, app::g_ctx.hInst, nullptr);
+            R + 8 + advBtnW + smallGap, y + 20, advBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTART_EXPLORER, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"解除网络限制", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            R + 10, y + 56, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_NET, app::g_ctx.hInst, nullptr);
+            R + 8, y + 48, advBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_NET, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"解除U盘限制", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            R + 10 + btnW + 8, y + 56, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_USB, app::g_ctx.hInst, nullptr);
+            R + 8 + advBtnW + smallGap, y + 48, advBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_USB, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"解除键盘锁", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            R + 10, y + 90, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_KEYBD, app::g_ctx.hInst, nullptr);
+            R + 8, y + 76, advBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_KEYBD, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"一键解除全部", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            R + 10 + btnW + 8, y + 90, btnW, 28, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_ALL, app::g_ctx.hInst, nullptr);
+            R + 8 + advBtnW + smallGap, y + 76, advBtnW, btnH, hWnd, (HMENU)(INT_PTR)IDC_BTN_UNBLOCK_ALL, app::g_ctx.hInst, nullptr);
 
-        y = 162;
+        y = 136;
         // 窗口隐蔽
         CreateWindowW(L"BUTTON", L"窗口隐蔽", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, totalW, 105, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, totalW, 92, hWnd, nullptr, app::g_ctx.hInst, nullptr);
 
         g_hList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY,
-            L + 10, y + 20, 200, 70, hWnd,
+            L + 8, y + 18, 180, 62, hWnd,
             (HMENU)IDC_LIST_HIDDEN, app::g_ctx.hInst, nullptr);
 
-        const int sbW = 92;
-        const int sbStartX = L + 220;
-        const int sbGap = 8;
+        const int sbW = 82;
+        const int sbStartX = L + 196;
+        const int sbGap = 6;
         CreateWindowW(L"BUTTON", L"隐藏当前", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 0 * (sbW + sbGap), y + 20, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_HIDE_CURRENT, app::g_ctx.hInst, nullptr);
+            sbStartX + 0 * (sbW + sbGap), y + 18, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_HIDE_CURRENT, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"恢复选中", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 1 * (sbW + sbGap), y + 20, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTORE_SEL, app::g_ctx.hInst, nullptr);
+            sbStartX + 1 * (sbW + sbGap), y + 18, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTORE_SEL, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"恢复全部", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 2 * (sbW + sbGap), y + 20, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTORE_ALL, app::g_ctx.hInst, nullptr);
+            sbStartX + 2 * (sbW + sbGap), y + 18, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESTORE_ALL, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"选择模式", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 3 * (sbW + sbGap), y + 20, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_SELECT_MODE, app::g_ctx.hInst, nullptr);
+            sbStartX + 3 * (sbW + sbGap), y + 18, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_SELECT_MODE, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"截图预览", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 0 * (sbW + sbGap), y + 50, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_PREVIEW, app::g_ctx.hInst, nullptr);
+            sbStartX + 0 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_PREVIEW, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"悬浮窗", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 1 * (sbW + sbGap), y + 50, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_FLOAT, app::g_ctx.hInst, nullptr);
+            sbStartX + 1 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_FLOAT, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"广播窗口化", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 2 * (sbW + sbGap), y + 50, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_BROADCAST_WIN, app::g_ctx.hInst, nullptr);
+            sbStartX + 2 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_BROADCAST_WIN, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"退出黑屏", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            sbStartX + 3 * (sbW + sbGap), y + 50, sbW, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_EXIT_BLACK, app::g_ctx.hInst, nullptr);
+            sbStartX + 3 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_EXIT_BLACK, app::g_ctx.hInst, nullptr);
 
-        y = 278;
+        y = 234;
         // 密码计算器
         CreateWindowW(L"BUTTON", L"动态密码计算器", WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
-            L, y, totalW, 150, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L, y, totalW, 130, hWnd, nullptr, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"STATIC", L"版本号:", WS_CHILD | WS_VISIBLE,
-            L + 14, y + 22, 50, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L + 10, y + 20, 44, 18, hWnd, nullptr, app::g_ctx.hInst, nullptr);
         g_hVersion = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"11.06",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-            L + 64, y + 20, 90, 22, hWnd, (HMENU)(INT_PTR)IDC_EDIT_VERSION, app::g_ctx.hInst, nullptr);
+            L + 54, y + 18, 70, 20, hWnd, (HMENU)(INT_PTR)IDC_EDIT_VERSION, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"STATIC", L"日期:", WS_CHILD | WS_VISIBLE,
-            L + 164, y + 22, 34, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L + 130, y + 20, 30, 18, hWnd, nullptr, app::g_ctx.hInst, nullptr);
         {
             SYSTEMTIME st; GetLocalTime(&st);
             wchar_t dateBuf[32];
             swprintf(dateBuf, 32, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
             g_hDate = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", dateBuf,
                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                L + 198, y + 20, 100, 22, hWnd, (HMENU)(INT_PTR)IDC_EDIT_DATE, app::g_ctx.hInst, nullptr);
+                L + 160, y + 18, 90, 20, hWnd, (HMENU)(INT_PTR)IDC_EDIT_DATE, app::g_ctx.hInst, nullptr);
         }
 
         CreateWindowW(L"STATIC", L"计算机名:", WS_CHILD | WS_VISIBLE,
-            L + 308, y + 22, 60, 20, hWnd, nullptr, app::g_ctx.hInst, nullptr);
+            L + 256, y + 20, 54, 18, hWnd, nullptr, app::g_ctx.hInst, nullptr);
         g_hPcName = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", pwcalc::GetLocalComputerName().c_str(),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-            L + 368, y + 20, 140, 22, hWnd, (HMENU)(INT_PTR)IDC_EDIT_PCNAME, app::g_ctx.hInst, nullptr);
+            L + 310, y + 18, 120, 20, hWnd, (HMENU)(INT_PTR)IDC_EDIT_PCNAME, app::g_ctx.hInst, nullptr);
 
         CreateWindowW(L"BUTTON", L"计算密码", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 14, y + 52, 88, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_CALC_PASSWORD, app::g_ctx.hInst, nullptr);
+            L + 10, y + 44, 80, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_CALC_PASSWORD, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"读取极域密码", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-            L + 106, y + 52, 108, 26, hWnd, (HMENU)(INT_PTR)IDC_BTN_READ_MYTH_PWD, app::g_ctx.hInst, nullptr);
+            L + 94, y + 44, 96, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_READ_MYTH_PWD, app::g_ctx.hInst, nullptr);
 
         g_hResult = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
-            L + 222, y + 52, totalW - 232, 88, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
+            L + 198, y + 44, totalW - 208, 76, hWnd, (HMENU)(INT_PTR)IDC_EDIT_RESULT, app::g_ctx.hInst, nullptr);
 
         // 底部状态行 + 开机自启动
-        const int statusY = 435;
+        const int statusY = 370;
         g_hStatusText = CreateWindowW(L"STATIC", L"极域: 未运行",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            L, statusY, 280, 20, hWnd, (HMENU)(INT_PTR)IDC_STATIC_STATUS, app::g_ctx.hInst, nullptr);
+            L, statusY, 240, 18, hWnd, (HMENU)(INT_PTR)IDC_STATIC_STATUS, app::g_ctx.hInst, nullptr);
 
         g_hAutoStart = CreateWindowW(L"BUTTON", L"开机自启动",
             WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            L + 290, statusY, 100, 20, hWnd, (HMENU)(INT_PTR)IDC_CHK_AUTOSTART, app::g_ctx.hInst, nullptr);
+            L + 250, statusY - 2, 90, 18, hWnd, (HMENU)(INT_PTR)IDC_CHK_AUTOSTART, app::g_ctx.hInst, nullptr);
         if (spctl::IsAutoStartEnabled()) {
             SendMessageW(g_hAutoStart, BM_SETCHECK, BST_CHECKED, 0);
         }
 
         g_hArchPwd = CreateWindowW(L"STATIC", L"",
             WS_CHILD | WS_VISIBLE | SS_RIGHT,
-            L + 400, statusY, totalW - 400, 20, hWnd, (HMENU)(INT_PTR)1006, app::g_ctx.hInst, nullptr);
+            L + 350, statusY, totalW - 350, 18, hWnd, (HMENU)(INT_PTR)1006, app::g_ctx.hInst, nullptr);
 
         // 设置字体（状态栏需单独设置，EnumChildWindows 无法枚举到）
         if (g_hFont) {
