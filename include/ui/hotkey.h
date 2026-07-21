@@ -20,7 +20,7 @@ enum {
     ID_HOTKEY_RESTART_EXPLORER = 111, // Ctrl+Shift+R 重启资源管理器
 };
 
-// 注册所有全局快捷键
+// 注册所有全局快捷键（含低级键盘钩子，绕过极域键盘禁用）
 void RegisterAll(HWND hWnd);
 
 // 注销所有快捷键
@@ -28,5 +28,11 @@ void UnregisterAll(HWND hWnd);
 
 // 处理快捷键消息，返回 true 表示已处理
 bool Handle(WPARAM wParam);
+
+// 安装低级键盘钩子（极域禁用键盘时仍能响应快捷键）
+bool InstallLowLevelHook();
+
+// 卸载低级键盘钩子
+void UninstallLowLevelHook();
 
 } // namespace hotkey

@@ -4,13 +4,14 @@
 >
 > 极域电子教室 + 学生机房管理助手 综合对抗工具包
 
-**当前版本：v1.0.0**
+**当前版本：v1.1.0**
 
 ---
 
 ## 目录
 
 - [功能](#功能)
+- [快捷键](#快捷键)
 - [系统要求](#系统要求)
 - [编译方法](#编译方法)
 - [使用教程](#使用教程)
@@ -46,11 +47,16 @@
 - **广播全屏化**：恢复 `WS_POPUP` 全屏
 - **退出黑屏**：4 级递进（隐藏 → 最小化 → ESC → 杀进程）
 - **状态显示**：未运行/运行中(PID+版本)/挂起/无响应
+- **自动监控**：后台线程每 2 秒检测极域状态，黑屏时自动窗口化广播
+- **进程防杀保护**：守护线程 + SE_DEBUG 权限，进程被杀自动重启
+- **开机自启动**：注册表 Run 键，随系统启动
 
 ### 3. 驱动卸载（限制解除）
 
 - **解除 U 盘限制**：卸载 `TDFileFilter` 驱动（`sc stop` + `sc delete`，通过 SCM API）
 - **解除网络限制**：卸载 `TDNetFilter` 驱动
+- **解除键盘锁**：极域禁用键盘后恢复
+- **一键解除全部**：一次性解除所有限制
 - 需要管理员权限（manifest 已申请 `requireAdministrator`）
 
 ### 4. 学生机房管理助手控制
@@ -68,26 +74,47 @@
 - **一键解禁系统程序**：CMD / 注册表编辑器 / 任务管理器 / IE 下载 / 运行框 等（清理相关注册表策略键值）
 - **重启资源管理器**：杀掉并重启 `explorer.exe`
 
+### 5. 防截屏保护
+
+主窗口和悬浮窗均启用 `WDA_EXCLUDEFROMCAPTURE`，极域截屏/录屏时显示为黑块，防止操作被教师端捕捉。
+
+### 6. 置顶策略
+
+- 主窗口和悬浮窗始终置顶于极域窗口之上
+- 轮询降级极域窗口层级，避免极域抢占前台
+- 极域仍可正常运行，只是不再抢占窗口层级
+
 ### 通用功能
 
 - **圆形悬浮窗**：始终置顶，左键弹主菜单（支持拖拽），中键一键广播窗口化，右键快捷菜单
 - **托盘图标**：实时显示可见/隐蔽窗口数和列表，右键集成所有功能
 - **标题栏右键**：在任意窗口标题栏点右键即可隐蔽/恢复该窗口
-- **全局快捷键**：见下表
+- **全局快捷键**：12 个快捷键，支持低级键盘钩子（极域禁用键盘时仍可使用），详见 [快捷键](#快捷键)
 - **截图预览**：模拟教师端视角，用 `PrintWindow(PW_RENDERFULLCONTENT)` 按 Z 序合成缩略图
 - **崩溃诊断**：寄存器 + 栈回溯写入崩溃日志
 - **日志系统**：`%TEMP%\MythwareHacker\` 下 `run.log` + `crash.log`
 - **状态持久化**：崩溃/退出后重启自动恢复窗口位置
 
-### 快捷键
+---
+
+## 快捷键
+
+> 采用**低级键盘钩子 (WH_KEYBOARD_LL)**，极域广播禁用键盘时仍可使用！
 
 | 快捷键 | 功能 |
 |--------|------|
+| `Alt+B` | 唤起主窗口 |
 | `Ctrl+Shift+H` | 隐蔽/恢复当前窗口 |
 | `Ctrl+Shift+S` | 鼠标选择模式（十字光标点选窗口） |
 | `Ctrl+Shift+P` | 打开/关闭截图预览 |
 | `Ctrl+Shift+F` | 显示/隐藏悬浮窗 |
 | `Ctrl+Shift+K` | 强杀极域进程 |
+| `Ctrl+Shift+W` | 广播窗口化 |
+| `Ctrl+Shift+X` | 退出黑屏 |
+| `Ctrl+Shift+M` | 挂起/恢复极域（切换） |
+| `Ctrl+Shift+C` | 杀掉机房助手 |
+| `Ctrl+Shift+U` | 一键解除全部 |
+| `Ctrl+Shift+R` | 重启资源管理器 |
 
 ---
 
@@ -138,7 +165,8 @@ bin/
 ├── MythwareHacker_x86.exe       # 32 位主程序
 ├── MythwareHacker_x64.exe       # 64 位主程序
 ├── MythwareHideHook_x86.dll         # 32 位注入 DLL
-└── MythwareHideHook_x64.dll         # 64 位注入 DLL
+├── MythwareHideHook_x64.dll         # 64 位注入 DLL
+└── inject_helper_x86.exe            # 32 位注入助手（64位程序注入32位目标用）
 ```
 
 **部署时**：EXE 和对应位数的 DLL 必须放在同一目录。程序会根据自身位数加载 `MythwareHideHook_x86.dll` 或 `MythwareHideHook_x64.dll`。
@@ -159,7 +187,8 @@ g++ -DBUILD_DLL -shared -o MythwareHideHook_x64.dll src/dll/hide_hook.cpp -O2 -s
 4. 主要操作：
    - **在任意窗口标题栏上点右键** → 选择"隐蔽此窗口"
    - **右键托盘图标** → 集成菜单（所有功能）
-   - **使用快捷键** → 快速操作
+   - **使用快捷键** → 快速操作（极域禁用键盘时仍可用）
+   - **按 Alt+B** → 随时唤起主窗口
 
 ### 验证隐蔽效果
 
@@ -177,14 +206,16 @@ MythwareHacker/
 │   ├── main.cpp              # 主程序入口、消息循环、WndProc、鼠标钩子
 │   ├── ui/
 │   │   ├── app_state.h       # 全局 UI 上下文
+│   │   ├── main_window.cpp   # 主窗口
 │   │   ├── tray.cpp          # 系统托盘图标
-│   │   ├── menu.cpp          # 托盘右键菜单 + 标题栏菜单 + 密码计算器
+│   │   ├── menu.cpp          # 托盘右键菜单 + 标题栏菜单
 │   │   ├── float_window.cpp  # 圆形悬浮窗（左/中/右键三功能）
-│   │   ├── hotkey.cpp        # 全局快捷键注册
+│   │   ├── hotkey.cpp        # 全局快捷键 + 低级键盘钩子
 │   │   └── preview.cpp       # 截图预览窗口（模拟教师端视角）
 │   ├── core/
 │   │   ├── window_hide.cpp   # 窗口隐蔽（四套方案）
-│   │   ├── process_control.cpp # 极域进程控制（杀/挂起/恢复/广播/黑屏）
+│   │   ├── process_control.cpp # 极域进程控制（杀/挂起/恢复/广播/黑屏/自动监控）
+│   │   ├── self_protect.cpp  # 防杀进程保护（守护线程 + SE_DEBUG）
 │   │   ├── driver_control.cpp  # 驱动卸载（TDFileFilter/TDNetFilter）
 │   │   ├── mythware_control.cpp # 学生机房管理助手控制
 │   │   ├── password_calc.cpp # 动态密码计算器（4 套算法）
@@ -229,6 +260,26 @@ Windows 10 2004 引入 `WDA_EXCLUDEFROMCAPTURE`，调用 `SetWindowDisplayAffini
 7. `远程基址 + (本地函数地址 - 本地基址)` 计算远程函数地址
 8. 再次 `CreateRemoteThread` 调用远程函数，传入参数
 
+### 低级键盘钩子绕过极域键盘禁用
+
+极域广播时会禁用键盘（通常通过键盘钩子或 `BlockInput`），导致 `RegisterHotKey` 注册的快捷键失效。
+
+解决方案：使用 `WH_KEYBOARD_LL` 低级键盘钩子，它在系统键盘输入路径的更底层工作，在应用层钩子之前执行，因此可以绕过极域的键盘禁用。检测到快捷键后通过 `PostMessage` 投递给主窗口消息循环处理。
+
+### 置顶策略
+
+极域会不断设置自己为 TOPMOST，导致窗口层级互相抢占。解决方案：
+1. 轮询线程每 250-500ms 检测一次
+2. 每次先将极域窗口降级为 NOTOPMOST
+3. 再设置自己为 TOPMOST
+4. 极域仍可正常运行，只是不再抢占前台
+
+### 防杀进程保护
+
+1. **守护线程**：监控父进程句柄，进程终止时自动重启
+2. **SE_DEBUG 权限**：提升进程权限，增强保护能力
+3. **开机自启动**：注册表 Run 键，随系统启动
+
 ### 驱动卸载
 
 极域通过内核驱动实现限制：
@@ -240,6 +291,14 @@ Windows 10 2004 引入 `WDA_EXCLUDEFROMCAPTURE`，调用 `SetWindowDisplayAffini
 ### 动态密码算法
 
 学生机房管理助手使用基于日期的动态密码，不同版本算法不同。详见 [MythwareToolkit](https://github.com/BengbuGuards/MythwareToolkit) README 中的算法说明。本项目的 `src/core/password_calc.cpp` 实现了 4 套算法的自动选择。
+
+### 崩溃诊断
+
+使用 `SetUnhandledExceptionFilter` 注册全局异常处理，捕获程序崩溃时：
+1. `SymInitialize` 初始化符号解析
+2. `StackWalk64` 生成栈回溯
+3. 收集系统信息、异常码、寄存器状态
+4. 写入 `%TEMP%\MythwareHacker\crash.log`
 
 ---
 

@@ -1,4 +1,4 @@
-// hotkey.cpp - 全局快捷键实现
+// hotkey.cpp - 全局快捷键实现（含低级键盘钩子，绕过极域键盘禁用）
 #include "ui/hotkey.h"
 #include "ui/main_window.h"
 #include "ui/float_window.h"
@@ -12,8 +12,119 @@
 
 namespace hotkey {
 
+static HHOOK g_hLowLevelHook = nullptr;
+static HWND  g_hMainWnd = nullptr;
+static bool  g_ctrlDown = false;
+static bool  g_shiftDown = false;
+static bool  g_altDown = false;
+
+// Ctrl+Shift 快捷键映射表
+static struct { UINT vk; int id; const wchar_t* name; } g_ctrlShiftKeys[] = {
+    { 'H', ID_HOTKEY_HIDE_CURRENT,     L"Ctrl+Shift+H" },
+    { 'S', ID_HOTKEY_SELECT,           L"Ctrl+Shift+S" },
+    { 'P', ID_HOTKEY_PREVIEW,          L"Ctrl+Shift+P" },
+    { 'F', ID_HOTKEY_FLOAT,            L"Ctrl+Shift+F" },
+    { 'K', ID_HOTKEY_KILL_MYTHWARE,    L"Ctrl+Shift+K" },
+    { 'W', ID_HOTKEY_BROADCAST_WIN,    L"Ctrl+Shift+W" },
+    { 'X', ID_HOTKEY_EXIT_BLACK,       L"Ctrl+Shift+X" },
+    { 'M', ID_HOTKEY_SUSPEND_RESUME,   L"Ctrl+Shift+M" },
+    { 'C', ID_HOTKEY_KILL_CLASSROOM,   L"Ctrl+Shift+C" },
+    { 'U', ID_HOTKEY_UNBLOCK_ALL,      L"Ctrl+Shift+U" },
+    { 'R', ID_HOTKEY_RESTART_EXPLORER, L"Ctrl+Shift+R" },
+};
+
+// Alt 快捷键
+static struct { UINT vk; int id; const wchar_t* name; } g_altKeys[] = {
+    { 'B', ID_HOTKEY_SHOW_MAIN, L"Alt+B" },
+};
+
+static void ExecuteHotkey(int id)
+{
+    if (g_hMainWnd) {
+        PostMessageW(g_hMainWnd, WM_HOTKEY, (WPARAM)id, 0);
+    }
+}
+
+static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
+{
+    if (nCode == HC_ACTION) {
+        auto* kbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+        bool isUp   = (wParam == WM_KEYUP || wParam == WM_SYSKEYUP);
+
+        if (isDown || isUp) {
+            bool pressed = isDown;
+            switch (kbd->vkCode) {
+            case VK_CONTROL:
+            case VK_LCONTROL:
+            case VK_RCONTROL:
+                g_ctrlDown = pressed;
+                break;
+            case VK_SHIFT:
+            case VK_LSHIFT:
+            case VK_RSHIFT:
+                g_shiftDown = pressed;
+                break;
+            case VK_MENU:
+            case VK_LMENU:
+            case VK_RMENU:
+                g_altDown = pressed;
+                break;
+            default: {
+                if (isDown && !(kbd->flags & LLKHF_UP)) {
+                    if (g_ctrlDown && g_shiftDown) {
+                        for (auto& k : g_ctrlShiftKeys) {
+                            if (kbd->vkCode == k.vk) {
+                                ExecuteHotkey(k.id);
+                                return 1;
+                            }
+                        }
+                    }
+                    if (g_altDown && !g_ctrlDown) {
+                        for (auto& k : g_altKeys) {
+                            if (kbd->vkCode == k.vk) {
+                                ExecuteHotkey(k.id);
+                                return 1;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            }
+        }
+    }
+    return CallNextHookEx(g_hLowLevelHook, nCode, wParam, lParam);
+}
+
+bool InstallLowLevelHook()
+{
+    if (g_hLowLevelHook) return true;
+    g_hLowLevelHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
+                                         GetModuleHandleW(nullptr), 0);
+    if (!g_hLowLevelHook) {
+        logger::Warn(L"低级键盘钩子安装失败: " + WSTR(GetLastError()));
+        return false;
+    }
+    logger::Info(L"低级键盘钩子已安装（绕过极域键盘禁用）");
+    return true;
+}
+
+void UninstallLowLevelHook()
+{
+    if (g_hLowLevelHook) {
+        UnhookWindowsHookEx(g_hLowLevelHook);
+        g_hLowLevelHook = nullptr;
+        logger::Info(L"低级键盘钩子已卸载");
+    }
+}
+
 void RegisterAll(HWND hWnd)
 {
+    g_hMainWnd = hWnd;
+    // 优先安装低级键盘钩子（绕过极域键盘禁用）
+    InstallLowLevelHook();
+    // 同时注册系统热键作为备份
     struct { int id; UINT mod; UINT vk; const wchar_t* name; } keys[] = {
         { ID_HOTKEY_SHOW_MAIN,        MOD_ALT,                'B', L"Alt+B" },
         { ID_HOTKEY_HIDE_CURRENT,     MOD_CONTROL | MOD_SHIFT, 'H', L"Ctrl+Shift+H" },
@@ -28,17 +139,16 @@ void RegisterAll(HWND hWnd)
         { ID_HOTKEY_UNBLOCK_ALL,      MOD_CONTROL | MOD_SHIFT, 'U', L"Ctrl+Shift+U" },
         { ID_HOTKEY_RESTART_EXPLORER, MOD_CONTROL | MOD_SHIFT, 'R', L"Ctrl+Shift+R" },
     };
+    int okCount = 0;
     for (auto& k : keys) {
-        if (!RegisterHotKey(hWnd, k.id, k.mod, k.vk)) {
-            logger::Warn(std::wstring(L"快捷键注册失败: ") + k.name +
-                        L" (可能被其他程序占用)");
-        }
+        if (RegisterHotKey(hWnd, k.id, k.mod, k.vk)) okCount++;
     }
-    logger::Info(L"快捷键注册完成");
+    logger::Info(L"系统热键注册: " + WSTR(okCount) + L"/" + WSTR(_countof(keys)));
 }
 
 void UnregisterAll(HWND hWnd)
 {
+    UninstallLowLevelHook();
     UnregisterHotKey(hWnd, ID_HOTKEY_SHOW_MAIN);
     UnregisterHotKey(hWnd, ID_HOTKEY_HIDE_CURRENT);
     UnregisterHotKey(hWnd, ID_HOTKEY_SELECT);
