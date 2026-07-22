@@ -465,7 +465,7 @@ static DWORD WINAPI BroadcastFixThreadProc(LPVOID)
         // 只有用户显式设置过置顶开关，才执行修改
         // 默认状态下不干涉极域窗口
         if (!g_broadcastTopmostEnabled && !g_setAllowGbTop) {
-            Sleep(500);
+            Sleep(2000);
             continue;
         }
 
@@ -483,7 +483,7 @@ static DWORD WINAPI BroadcastFixThreadProc(LPVOID)
             }
         }
 
-        Sleep(500);
+        Sleep(2000);
     }
     return 0;
 }

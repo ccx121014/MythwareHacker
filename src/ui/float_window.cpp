@@ -11,23 +11,9 @@ namespace floatw {
 static const int FLOAT_SIZE = 48;  // 圆窗直径
 static bool g_dragging = false;
 static POINT g_dragStart = {};
-static HANDLE g_hTopmostThread = nullptr;
-static bool g_topmostRunning = false;
 
-// 轮询置顶线程（参考 MythwareToolkit 的竞争置顶策略）
-// 只确保自身置顶，不去掉极域窗口的置顶，避免双方来回修改导致卡顿
-static DWORD WINAPI TopmostThreadProc(LPVOID lpParameter)
-{
-    while (g_topmostRunning) {
-        HWND hWnd = app::g_ctx.hWndFloat;
-        if (hWnd && IsWindow(hWnd) && IsWindowVisible(hWnd)) {
-            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        Sleep(1000);
-    }
-    return 0;
-}
+// 事件驱动置顶：通过 WM_WINDOWPOSCHANGED 事件触发，无需后台线程
+// 参考 MythwareToolkit 实现，避免持续轮询导致卡顿
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -121,6 +107,17 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
     case WM_ERASEBKGND:
         return 1;
 
+    // 事件驱动置顶：仅当其他窗口把本窗口挤下去时才重新置顶
+    // 参考 MythwareToolkit 实现，避免后台线程持续轮询
+    case WM_WINDOWPOSCHANGED: {
+        WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*>(lParam);
+        if (!(wp->flags & SWP_NOZORDER) && IsWindowVisible(hWnd)) {
+            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
     }
@@ -138,32 +135,13 @@ ATOM RegisterClass(HINSTANCE hInst)
     return RegisterClassExW(&wc);
 }
 
-static void StartTopmostThread()
-{
-    if (g_hTopmostThread) return;
-    g_topmostRunning = true;
-    g_hTopmostThread = CreateThread(nullptr, 0, TopmostThreadProc, nullptr, 0, nullptr);
-}
-
-static void StopTopmostThread()
-{
-    g_topmostRunning = false;
-    if (g_hTopmostThread) {
-        DWORD result = WaitForSingleObject(g_hTopmostThread, 300);
-        if (result != WAIT_OBJECT_0) {
-            TerminateThread(g_hTopmostThread, 0);
-        }
-        CloseHandle(g_hTopmostThread);
-        g_hTopmostThread = nullptr;
-    }
-}
-
 void Show()
 {
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         ShowWindow(app::g_ctx.hWndFloat, SW_SHOWNORMAL);
+        SetWindowPos(app::g_ctx.hWndFloat, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         SetWindowDisplayAffinity(app::g_ctx.hWndFloat, WDA_EXCLUDEFROMCAPTURE);
-        StartTopmostThread();
         return;
     }
 
@@ -183,14 +161,12 @@ void Show()
         ShowWindow(app::g_ctx.hWndFloat, SW_SHOWNORMAL);
         UpdateWindow(app::g_ctx.hWndFloat);
         SetWindowDisplayAffinity(app::g_ctx.hWndFloat, WDA_EXCLUDEFROMCAPTURE);
-        StartTopmostThread();
-        logger::Info(L"悬浮窗已显示（轮询置顶）");
+        logger::Info(L"悬浮窗已显示（事件驱动置顶）");
     }
 }
 
 void Hide()
 {
-    StopTopmostThread();
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         ShowWindow(app::g_ctx.hWndFloat, SW_HIDE);
     }
@@ -212,7 +188,6 @@ bool IsVisible()
 
 void Cleanup()
 {
-    StopTopmostThread();
     if (app::g_ctx.hWndFloat && IsWindow(app::g_ctx.hWndFloat)) {
         DestroyWindow(app::g_ctx.hWndFloat);
         app::g_ctx.hWndFloat = nullptr;

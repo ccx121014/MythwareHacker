@@ -1,4 +1,5 @@
 // preview.cpp - 截图预览窗口实现
+// 性能优化：大幅降低刷新频率，避免全屏 StretchBlt 导致卡顿
 #include "ui/preview.h"
 #include "ui/app_state.h"
 #include "core/window_hide.h"
@@ -11,13 +12,21 @@ static HBITMAP g_hBitmap = nullptr;
 static HDC     g_hDCMem  = nullptr;
 static int     g_width   = 0;
 static int     g_height  = 0;
+static bool    g_needUpdate = true;  // 只在需要时更新
+
+// 预览刷新间隔：3秒（从1秒大幅降低，避免卡顿）
+// 截图预览不是实时监控，3秒完全够用
+#define PREVIEW_INTERVAL_MS 3000
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
     case WM_TIMER:
         if (wParam == PREVIEW_TIMER_ID) {
-            UpdateBitmap();
+            // 只在窗口可见时才更新
+            if (IsWindowVisible(hWnd)) {
+                UpdateBitmap();
+            }
         }
         return 0;
 

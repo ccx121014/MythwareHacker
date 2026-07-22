@@ -25,40 +25,9 @@ static HWND g_hDate      = nullptr;
 static HWND g_hPcName    = nullptr;
 static HWND g_hResult    = nullptr;
 static HFONT g_hFont     = nullptr;
-static HANDLE g_hTopmostThread = nullptr;
-static bool g_topmostRunning = false;
 
-static DWORD WINAPI TopmostThreadProc(LPVOID)
-{
-    while (g_topmostRunning) {
-        if (g_hWnd && IsWindow(g_hWnd) && IsWindowVisible(g_hWnd)) {
-            SetWindowPos(g_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        Sleep(1000);
-    }
-    return 0;
-}
-
-static void StartTopmostThread()
-{
-    if (g_hTopmostThread) return;
-    g_topmostRunning = true;
-    g_hTopmostThread = CreateThread(nullptr, 0, TopmostThreadProc, nullptr, 0, nullptr);
-}
-
-static void StopTopmostThread()
-{
-    g_topmostRunning = false;
-    if (g_hTopmostThread) {
-        DWORD result = WaitForSingleObject(g_hTopmostThread, 300);
-        if (result != WAIT_OBJECT_0) {
-            TerminateThread(g_hTopmostThread, 0);
-        }
-        CloseHandle(g_hTopmostThread);
-        g_hTopmostThread = nullptr;
-    }
-}
+// 事件驱动置顶：无需后台线程，通过 WM_WINDOWPOSCHANGED 事件触发
+// 参考 MythwareToolkit 的实现，避免持续轮询导致卡顿
 
 static const int WIN_W = 620;
 static const int WIN_H = 460;
@@ -262,7 +231,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             SendMessageW(g_hStatusText, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         }
 
-        SetTimer(hWnd, IDC_GUI_TIMER, 3000, nullptr);
+        SetTimer(hWnd, IDC_GUI_TIMER, 5000, nullptr);
 
         RefreshStatus();
         RefreshWindowList();
@@ -428,6 +397,17 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         return 0;
     }
 
+    // 事件驱动置顶：仅当其他窗口把本窗口挤下去时才重新置顶
+    // 参考 MythwareToolkit 实现，避免后台线程持续轮询
+    case WM_WINDOWPOSCHANGED: {
+        WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*>(lParam);
+        if (!(wp->flags & SWP_NOZORDER) && IsWindowVisible(hWnd)) {
+            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        return DefWindowProcW(hWnd, message, wParam, lParam);
+    }
+
     default:
         return DefWindowProcW(hWnd, message, wParam, lParam);
     }
@@ -464,16 +444,16 @@ void Show()
     if (g_hWnd) {
         ShowWindow(g_hWnd, SW_SHOW);
         SetForegroundWindow(g_hWnd);
+        SetWindowPos(g_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         SetWindowDisplayAffinity(g_hWnd, WDA_EXCLUDEFROMCAPTURE);
         RefreshStatus();
         RefreshWindowList();
-        StartTopmostThread();
     }
 }
 
 void Hide()
 {
-    StopTopmostThread();
     if (g_hWnd) ShowWindow(g_hWnd, SW_HIDE);
 }
 

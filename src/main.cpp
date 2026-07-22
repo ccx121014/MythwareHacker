@@ -214,8 +214,8 @@ static DWORD WINAPI MonitorThreadProc(LPVOID)
             wasBlackScreen = isBlack;
         }
 
-        // 3 秒间隔（JiYuTrainer 用 3100ms），2 秒太频繁
-        Sleep(3000);
+        // 5 秒间隔，减少进程快照开销
+        Sleep(5000);
     }
     return 0;
 }
