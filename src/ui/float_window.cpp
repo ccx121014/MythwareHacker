@@ -14,17 +14,17 @@ static POINT g_dragStart = {};
 static HANDLE g_hTopmostThread = nullptr;
 static bool g_topmostRunning = false;
 
-// 轮询置顶线程（参考 MythwareToolkit）
+// 轮询置顶线程（参考 MythwareToolkit 的竞争置顶策略）
+// 只确保自身置顶，不去掉极域窗口的置顶，避免双方来回修改导致卡顿
 static DWORD WINAPI TopmostThreadProc(LPVOID lpParameter)
 {
     while (g_topmostRunning) {
-        pctl::DemoteMythwareWindows();
         HWND hWnd = app::g_ctx.hWndFloat;
         if (hWnd && IsWindow(hWnd) && IsWindowVisible(hWnd)) {
             SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
-        Sleep(250);
+        Sleep(500);
     }
     return 0;
 }

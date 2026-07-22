@@ -375,6 +375,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         persist::Delete();
         preview::Cleanup();
         floatw::Cleanup();
+        pctl::CleanupBroadcastTopmost();
         KillTimer(hWnd, TRAYTIP_TIMER_ID);
         hotkey::UnregisterAll(hWnd);
         if (app::g_ctx.hMouseHook) {

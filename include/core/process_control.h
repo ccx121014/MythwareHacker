@@ -74,4 +74,7 @@ void DemoteMythwareWindows();
 // 绕过极域通过 BlockInput 禁用键盘。返回是否成功。
 bool UnblockInputInMythware();
 
+// 清理广播置顶维持线程（程序退出时调用）
+void CleanupBroadcastTopmost();
+
 } // namespace pctl

@@ -131,12 +131,14 @@ static DWORD WINAPI HookCompeteThreadProc(LPVOID)
 static DWORD WINAPI BlockInputBypassThreadProc(LPVOID)
 {
     while (g_hookRunning) {
-        // 同时尝试两种解除方式
-        // 1. 在极域进程内远程调用 BlockInput(FALSE)
-        pctl::UnblockInputInMythware();
-        // 2. 自己也尝试调用（某些情况下可能有效）
-        BlockInput(FALSE);
-        Sleep(200);
+        // 只在极域运行时才解除，避免空转消耗资源
+        if (pctl::GetMythwareStatus().state == pctl::MythwareState::Running) {
+            // 1. 在极域进程内远程调用 BlockInput(FALSE)
+            pctl::UnblockInputInMythware();
+            // 2. 自己也尝试调用（某些情况下可能有效）
+            BlockInput(FALSE);
+        }
+        Sleep(500);
     }
     return 0;
 }

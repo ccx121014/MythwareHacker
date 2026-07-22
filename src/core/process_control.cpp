@@ -8,6 +8,41 @@ static const wchar_t* STUDENT_MAIN = L"StudentMain.exe";
 
 static bool g_mythwareSuspended = false;
 
+static bool g_broadcastTopmostEnabled = false;
+static HANDLE g_hBroadcastTopmostThread = nullptr;
+static bool g_broadcastTopmostRunning = false;
+
+static HWND FindBroadcastWindow();
+
+static DWORD WINAPI BroadcastTopmostThreadProc(LPVOID)
+{
+    while (g_broadcastTopmostRunning) {
+        HWND hwnd = FindBroadcastWindow();
+        if (hwnd) {
+            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            bool isTopmost = (exStyle & WS_EX_TOPMOST) != 0;
+            if (g_broadcastTopmostEnabled && !isTopmost) {
+                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOPMOST);
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            } else if (!g_broadcastTopmostEnabled && isTopmost) {
+                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_TOPMOST);
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+        }
+        Sleep(500);
+    }
+    return 0;
+}
+
+static void EnsureBroadcastTopmostThread()
+{
+    if (g_hBroadcastTopmostThread) return;
+    g_broadcastTopmostRunning = true;
+    g_hBroadcastTopmostThread = CreateThread(nullptr, 0, BroadcastTopmostThreadProc, nullptr, 0, nullptr);
+}
+
 // 内部：通过进程名查找 PID
 static DWORD FindProcessByName(const std::wstring& name)
 {
@@ -304,49 +339,26 @@ bool BroadcastToWindowed()
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // 方案1：先尝试发送 WM_COMMAND 模拟点击"窗口化"按钮
-    // 极域广播窗口的窗口化按钮命令 ID 可能为 1004 或其他
-    // 尝试多个可能的命令 ID
-    const int cmdIds[] = {1004, 1005, 1006, 1003, 1002, 1001};
-    for (int id : cmdIds) {
-        PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(id, BN_CLICKED), 0);
-        Sleep(200);
-
-        // 检查窗口是否已经变小
-        RECT rc;
-        GetWindowRect(hwnd, &rc);
-        if (rc.right - rc.left < screenW * 0.9 || rc.bottom - rc.top < screenH * 0.9) {
-            logger::Info(L"已通过 WM_COMMAND(ID=" + WSTR(id) + L") 将广播窗口化");
-            return true;
-        }
-    }
-
-    // 方案2：直接修改窗口样式
-    // 先获取当前样式
+    // 直接修改窗口样式（不使用 WM_COMMAND 试探，避免 Sleep 卡顿）
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
 
-    // 移除 WS_POPUP（全屏弹窗样式），添加 WS_OVERLAPPEDWINDOW（标准窗口样式）
     style &= ~WS_POPUP;
     style |= WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     SetWindowLong(hwnd, GWL_STYLE, style);
 
-    // 取消 WS_EX_TOPMOST 如果有
     exStyle &= ~WS_EX_TOPMOST;
     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    // 设置窗口位置和大小（屏幕中央，50% 大小）
     int w = screenW * 0.6;
     int h = screenH * 0.7;
     int x = (screenW - w) / 2;
     int y = (screenH - h) / 2;
     SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
 
-    // 强制刷新
-    SetForegroundWindow(hwnd);
     InvalidateRect(hwnd, nullptr, TRUE);
 
-    logger::Info(L"已通过修改样式将广播窗口化");
+    logger::Info(L"已将广播窗口化");
     return true;
 }
 
@@ -374,30 +386,34 @@ bool SetBroadcastTopmost(bool enable)
     HWND hwnd = FindBroadcastWindow();
     if (!hwnd) {
         logger::Warn(L"未找到广播窗口，无法设置置顶");
+        g_broadcastTopmostEnabled = enable;
+        EnsureBroadcastTopmostThread();
         return false;
     }
+
+    g_broadcastTopmostEnabled = enable;
+    EnsureBroadcastTopmostThread();
 
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
     if (enable) {
         exStyle |= WS_EX_TOPMOST;
         SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        logger::Info(L"已将广播窗口设为置顶");
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        logger::Info(L"已将广播窗口设为置顶（持续维持）");
     } else {
         exStyle &= ~WS_EX_TOPMOST;
         SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        logger::Info(L"已取消广播窗口置顶");
+        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        logger::Info(L"已取消广播窗口置顶（持续维持）");
     }
     return true;
 }
 
 bool IsBroadcastTopmost()
 {
-    HWND hwnd = FindBroadcastWindow();
-    if (!hwnd) return false;
-    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    return (exStyle & WS_EX_TOPMOST) != 0;
+    return g_broadcastTopmostEnabled;
 }
 
 struct BlackScreenData { HWND hwnd; };
@@ -556,6 +572,19 @@ bool UnblockInputInMythware()
     CloseHandle(hProcess);
     logger::Info(L"已在极域进程内解除 BlockInput");
     return true;
+}
+
+void CleanupBroadcastTopmost()
+{
+    g_broadcastTopmostRunning = false;
+    if (g_hBroadcastTopmostThread) {
+        DWORD result = WaitForSingleObject(g_hBroadcastTopmostThread, 500);
+        if (result != WAIT_OBJECT_0) {
+            TerminateThread(g_hBroadcastTopmostThread, 0);
+        }
+        CloseHandle(g_hBroadcastTopmostThread);
+        g_hBroadcastTopmostThread = nullptr;
+    }
 }
 
 } // namespace pctl
