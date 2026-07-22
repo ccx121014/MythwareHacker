@@ -274,54 +274,70 @@ bool ResumeMythware()
 }
 
 // 内部：查找极域广播窗口
-// 极域广播窗口类名通常是 "T.TopDomain.Student.BroadcastForm" 或类似
-// 同时查找多种可能的窗口类名
-struct FindBroadcastData { HWND hwnd; };
+// 参考 MythwareToolkit 和 JiYuTrainer 的查找算法：
+//   1. 必须属于 StudentMain.exe 进程（PID 过滤）
+//   2. 类名以 "Afx:" 开头（MFC 框架特征，极域基于 MFC）
+//   3. 标题匹配："屏幕广播"、"广播"、"演示"、"共享"、"屏幕演播室窗口"
+struct FindBroadcastData { DWORD pid; HWND hwnd; };
 
 static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
 {
     auto* d = reinterpret_cast<FindBroadcastData*>(lParam);
     if (!IsWindowVisible(hwnd)) return TRUE;
 
-    wchar_t cls[256] = {};
-    wchar_t title[256] = {};
-    GetClassNameW(hwnd, cls, 256);
-    GetWindowTextW(hwnd, title, 256);
+    // 1. PID 过滤：必须属于极域进程
+    DWORD windowPid = 0;
+    GetWindowThreadProcessId(hwnd, &windowPid);
+    if (windowPid != d->pid) return TRUE;
 
-    // 极域广播窗口类名特征：
-    // - T.TopDomain.Student.BroadcastForm
-    // - TopDomain
-    // - Broadcast
-    // 或者标题包含"广播"
-    bool isBroadcast = wcsstr(cls, L"TopDomain") ||
-                        wcsstr(cls, L"Broadcast") ||
-                        wcsstr(cls, L"Mythware") ||
-                        wcsstr(title, L"广播") ||
-                        wcsstr(title, L"Broad");
+    // 2. 类名前缀匹配："Afx:"（MFC 框架）
+    char clsA[8] = {};
+    GetClassNameA(hwnd, clsA, sizeof(clsA));
+    if (_stricmp(clsA, "Afx:") != 0) return TRUE;
+
+    // 3. 标题匹配
+    wchar_t title[256] = {};
+    GetWindowTextW(hwnd, title, 256);
+    std::wstring titleStr = title;
+
+    bool isBroadcast = (titleStr == L"屏幕广播") ||
+                       (titleStr.find(L"广播") != std::wstring::npos) ||
+                       (titleStr.find(L"演示") != std::wstring::npos) ||
+                       (titleStr.find(L"共享") != std::wstring::npos) ||
+                       (titleStr == L"屏幕演播室窗口") ||
+                       (titleStr.find(L"窗口化屏幕") != std::wstring::npos);
 
     if (!isBroadcast) return TRUE;
 
-    // 检查是否接近全屏（广播窗口通常是全屏或接近全屏）
-    RECT rc;
-    GetWindowRect(hwnd, &rc);
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
-    int winW = rc.right - rc.left;
-    int winH = rc.bottom - rc.top;
-
-    // 窗口至少占屏幕 70% 才认为是广播窗口
-    if (winW >= screenW * 0.7 && winH >= screenH * 0.7) {
-        d->hwnd = hwnd;
-        return FALSE;
-    }
-    return TRUE;
+    d->hwnd = hwnd;
+    return FALSE;  // 找到了，停止枚举
 }
 
 static HWND FindBroadcastWindow()
 {
-    FindBroadcastData data = {};
+    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    if (pid == 0) return nullptr;
+
+    FindBroadcastData data = { pid, nullptr };
     EnumWindows(FindBroadcastProc, reinterpret_cast<LPARAM>(&data));
     return data.hwnd;
+}
+
+// 检查广播窗口是否已窗口化（参考 MythwareToolkit：检查 WS_CAPTION|WS_SIZEBOX 或 WS_SYSMENU）
+static bool IsBroadcastWindowed(HWND hwnd)
+{
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    return (style & (WS_CAPTION | WS_SIZEBOX)) != 0 ||
+           (style & WS_SYSMENU) != 0;
+}
+
+// 调整广播窗口内部的渲染子窗口 "TDDesk Render Window"（参考 JiYuTrainer）
+static void ResizeBroadcastChild(HWND hwndParent, int w, int h)
+{
+    HWND hChild = FindWindowExW(hwndParent, nullptr, nullptr, L"TDDesk Render Window");
+    if (hChild) {
+        MoveWindow(hChild, 0, 0, w, h, TRUE);
+    }
 }
 
 bool BroadcastToWindowed()
@@ -333,51 +349,114 @@ bool BroadcastToWindowed()
     }
 
     wchar_t cls[256] = {};
+    wchar_t title[256] = {};
     GetClassNameW(hwnd, cls, 256);
-    logger::Info(L"找到广播窗口: 类名=" + std::wstring(cls));
+    GetWindowTextW(hwnd, title, 256);
+    logger::Info(L"找到广播窗口: 类名=" + std::wstring(cls) + L" 标题=" + std::wstring(title));
+
+    // 如果已经窗口化，不做重复操作
+    if (IsBroadcastWindowed(hwnd)) {
+        logger::Info(L"广播窗口已处于窗口化状态");
+        return true;
+    }
 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // 直接修改窗口样式（不使用 WM_COMMAND 试探，避免 Sleep 卡顿）
+    // 方案1（MythwareToolkit 方法）：发送 WM_COMMAND(1004, BM_CLICK) 让极域自己切换
+    // 这是极域广播窗口内部"窗口化"按钮的控件 ID
+    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1004, BM_CLICK), 0);
+
+    // 等待极域处理消息（异步 PostMessage，给一点时间）
+    Sleep(300);
+
+    // 检查是否成功窗口化
+    if (IsBroadcastWindowed(hwnd)) {
+        // 窗口化成功，调整位置和大小（参考 JiYuTrainer：3/4 宽 × 4/5 高，居中）
+        int w = (int)(screenW * 3.0 / 4.0);
+        int h = (int)(screenH * 4.0 / 5.0);
+        int x = (screenW - w) / 2;
+        int y = (screenH - h) / 2;
+        SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_SHOWWINDOW);
+        ResizeBroadcastChild(hwnd, w, h);
+        logger::Info(L"已通过 WM_COMMAND(1004) 将广播窗口化");
+        return true;
+    }
+
+    // 方案2（JiYuTrainer 方法）：直接修改窗口样式
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
 
-    style &= ~WS_POPUP;
-    style |= WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+    // 添加边框 + 标题栏 + 可调大小 + 系统菜单
+    style |= WS_BORDER | WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     SetWindowLong(hwnd, GWL_STYLE, style);
 
+    // 去掉置顶
     exStyle &= ~WS_EX_TOPMOST;
     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    int w = screenW * 0.6;
-    int h = screenH * 0.7;
+    int w = (int)(screenW * 3.0 / 4.0);
+    int h = (int)(screenH * 4.0 / 5.0);
     int x = (screenW - w) / 2;
     int y = (screenH - h) / 2;
-    SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME);
 
-    InvalidateRect(hwnd, nullptr, TRUE);
+    // 通知窗口重排，调整子窗口
+    SendMessageW(hwnd, WM_SIZE, 0, MAKEWPARAM(w, h));
+    ResizeBroadcastChild(hwnd, w, h);
 
-    logger::Info(L"已将广播窗口化");
+    logger::Info(L"已通过修改样式将广播窗口化");
     return true;
 }
 
 bool BroadcastToFullscreen()
 {
     HWND hwnd = FindBroadcastWindow();
-    if (!hwnd) return false;
+    if (!hwnd) {
+        logger::Warn(L"未找到极域广播窗口");
+        return false;
+    }
 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
+    // 如果已经是全屏，不做重复操作
+    if (!IsBroadcastWindowed(hwnd)) {
+        logger::Info(L"广播窗口已处于全屏状态");
+        return true;
+    }
+
+    // 方案1（MythwareToolkit 方法）：发送 WM_COMMAND(1004, BM_CLICK) 让极域自己切换
+    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1004, BM_CLICK), 0);
+    Sleep(300);
+
+    if (!IsBroadcastWindowed(hwnd)) {
+        // 全屏化成功
+        logger::Info(L"已通过 WM_COMMAND(1004) 将广播全屏化");
+        return true;
+    }
+
+    // 方案2（JiYuTrainer 方法）：直接修改窗口样式
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+
+    // XOR 移除边框和 overlapped 样式
+    style &= ~(WS_BORDER | WS_OVERLAPPEDWINDOW);
     style |= WS_POPUP;
-    style &= ~WS_OVERLAPPEDWINDOW;
     SetWindowLong(hwnd, GWL_STYLE, style);
 
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screenW, screenH, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    // 添加置顶
+    exStyle |= WS_EX_TOPMOST;
+    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    logger::Info(L"已将广播全屏化");
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screenW, screenH, SWP_SHOWWINDOW);
+
+    // 通知窗口重排，调整子窗口
+    SendMessageW(hwnd, WM_SIZE, 0, MAKEWPARAM(screenW, screenH));
+    ResizeBroadcastChild(hwnd, screenW, screenH);
+
+    logger::Info(L"已通过修改样式将广播全屏化");
     return true;
 }
 
