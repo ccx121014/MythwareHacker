@@ -1,4 +1,5 @@
 // process_control.cpp - 极域进程控制实现
+// 广播窗口化/全屏化/置顶算法完全参考 JiYuTrainer
 #include "core/process_control.h"
 #include "utils/log.h"
 
@@ -8,54 +9,19 @@ static const wchar_t* STUDENT_MAIN = L"StudentMain.exe";
 
 static bool g_mythwareSuspended = false;
 
+// === 广播置顶开关（采用 JiYuTrainer 思路：全局变量 + 持续维持线程）===
 static bool g_broadcastTopmostEnabled = false;
+static bool g_setAllowGbTop = false;   // 模仿 JiYuTrainer: 允许广播窗口置顶
 static HANDLE g_hBroadcastTopmostThread = nullptr;
 static bool g_broadcastTopmostRunning = false;
-static HWND g_cachedBroadcastHwnd = nullptr;
+static HANDLE g_hBroadcastFixThread = nullptr;
+static bool g_broadcastFixRunning = false;
+
 static DWORD g_cachedBroadcastPid = 0;
-static DWORD g_lastBroadcastFindTick = 0;
 
-static HWND FindBroadcastWindow();
-
-static DWORD WINAPI BroadcastTopmostThreadProc(LPVOID)
-{
-    while (g_broadcastTopmostRunning) {
-        // 1 秒间隔，比 500ms 更省资源
-        Sleep(1000);
-
-        // 缓存广播窗口 HWND，避免每次都 EnumWindows
-        DWORD now = GetTickCount();
-        HWND hwnd = g_cachedBroadcastHwnd;
-        if (!hwnd || !IsWindow(hwnd) || now - g_lastBroadcastFindTick > 5000) {
-            // 缓存失效或超过 5 秒，重新查找
-            hwnd = FindBroadcastWindow();
-            g_cachedBroadcastHwnd = hwnd;
-            g_lastBroadcastFindTick = GetTickCount();
-        }
-
-        if (hwnd) {
-            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-            bool isTopmost = (exStyle & WS_EX_TOPMOST) != 0;
-            if (g_broadcastTopmostEnabled && !isTopmost) {
-                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOPMOST);
-                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            } else if (!g_broadcastTopmostEnabled && isTopmost) {
-                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle & ~WS_EX_TOPMOST);
-                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            }
-        }
-    }
-    return 0;
-}
-
-static void EnsureBroadcastTopmostThread()
-{
-    if (g_hBroadcastTopmostThread) return;
-    g_broadcastTopmostRunning = true;
-    g_hBroadcastTopmostThread = CreateThread(nullptr, 0, BroadcastTopmostThreadProc, nullptr, 0, nullptr);
-}
+static DWORD FindProcessByName(const std::wstring& name);
+static void EnsureBroadcastFixThread();
+static void StopBroadcastFixThread();
 
 // 内部：通过进程名查找 PID
 static DWORD FindProcessByName(const std::wstring& name)
@@ -185,7 +151,6 @@ bool KillMythware()
     g_cachedPid = 0;
     g_cachedVersion.clear();
     g_cachedBroadcastPid = 0;
-    g_cachedBroadcastHwnd = nullptr;
 
     // 方法1：直接 TerminateProcess（需要 PROCESS_TERMINATE 权限）
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
@@ -295,56 +260,50 @@ bool ResumeMythware()
     return false;
 }
 
-// 内部：查找极域广播窗口
-// 参考 MythwareToolkit 和 JiYuTrainer 的查找算法：
-//   1. 必须属于 StudentMain.exe 进程（PID 过滤）
-//   2. 类名以 "Afx:" 开头（MFC 框架特征，极域基于 MFC）
-//   3. 标题匹配："屏幕广播"、"广播"、"演示"、"共享"、"屏幕演播室窗口"
+// 内部：判断窗口标题是否是广播窗口（参考 JiYuTrainer::CheckWindowTextIsGb）
+static bool IsBroadcastTitle(const wchar_t* text)
+{
+    if (!text || !*text) return false;
+    return (wcsstr(text, L"广播") != nullptr) ||
+           (wcsstr(text, L"演示") != nullptr) ||
+           (wcsstr(text, L"共享") != nullptr) ||
+           (wcscmp(text, L"屏幕演播室窗口") == 0);
+}
+
+// 内部：判断窗口是否属于极域进程
+static bool IsMythwareWindow(HWND hwnd, DWORD mythwarePid)
+{
+    if (mythwarePid == 0) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    return pid == mythwarePid;
+}
+
 struct FindBroadcastData { DWORD pid; HWND hwnd; };
 
+// 枚举回调：找到极域广播窗口
 static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
 {
     auto* d = reinterpret_cast<FindBroadcastData*>(lParam);
     if (!IsWindowVisible(hwnd)) return TRUE;
+    if (!IsMythwareWindow(hwnd, d->pid)) return TRUE;
 
-    // 1. PID 过滤：必须属于极域进程
-    DWORD windowPid = 0;
-    GetWindowThreadProcessId(hwnd, &windowPid);
-    if (windowPid != d->pid) return TRUE;
-
-    // 2. 类名前缀匹配："Afx:"（MFC 框架）- 使用 strnicmp 前缀匹配
-    char clsA[256] = {};
-    GetClassNameA(hwnd, clsA, sizeof(clsA));
-    if (_strnicmp(clsA, "Afx:", 4) != 0) return TRUE;
-
-    // 3. 标题匹配
     wchar_t title[256] = {};
     GetWindowTextW(hwnd, title, 256);
-    std::wstring titleStr = title;
-
-    bool isBroadcast = (titleStr == L"屏幕广播") ||
-                       (titleStr.find(L"广播") != std::wstring::npos) ||
-                       (titleStr.find(L"演示") != std::wstring::npos) ||
-                       (titleStr.find(L"共享") != std::wstring::npos) ||
-                       (titleStr == L"屏幕演播室窗口") ||
-                       (titleStr.find(L"窗口化屏幕") != std::wstring::npos);
-
-    if (!isBroadcast) return TRUE;
+    if (!IsBroadcastTitle(title)) return TRUE;
 
     d->hwnd = hwnd;
     return FALSE;
 }
 
+// 查找极域广播窗口（参考 JiYuTrainer）
 static HWND FindBroadcastWindow()
 {
-    // 缓存极域 PID，避免每次都做进程快照
     DWORD pid = g_cachedBroadcastPid;
     if (pid == 0) {
         pid = FindProcessByName(STUDENT_MAIN);
         if (pid != 0) g_cachedBroadcastPid = pid;
-    }
-    // 验证缓存的 PID 是否仍然有效
-    else {
+    } else {
         HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if (!h) {
             g_cachedBroadcastPid = 0;
@@ -362,12 +321,13 @@ static HWND FindBroadcastWindow()
     return data.hwnd;
 }
 
-// 检查广播窗口是否已窗口化（参考 MythwareToolkit：检查 WS_CAPTION|WS_SIZEBOX 或 WS_SYSMENU）
+// 检查广播窗口是否已窗口化（参考 JiYuTrainer）
 static bool IsBroadcastWindowed(HWND hwnd)
 {
+    if (!hwnd) return false;
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
-    return (style & (WS_CAPTION | WS_SIZEBOX)) != 0 ||
-           (style & WS_SYSMENU) != 0;
+    // 已窗口化：包含 BORDER 或 OVERLAPPED 标志
+    return (style & (WS_BORDER | WS_OVERLAPPEDWINDOW)) != 0;
 }
 
 // 调整广播窗口内部的渲染子窗口 "TDDesk Render Window"（参考 JiYuTrainer）
@@ -379,6 +339,7 @@ static void ResizeBroadcastChild(HWND hwndParent, int w, int h)
     }
 }
 
+// 广播窗口化（参考 JiYuTrainer FakeFull(false)）
 bool BroadcastToWindowed()
 {
     HWND hwnd = FindBroadcastWindow();
@@ -387,68 +348,48 @@ bool BroadcastToWindowed()
         return false;
     }
 
-    wchar_t cls[256] = {};
     wchar_t title[256] = {};
-    GetClassNameW(hwnd, cls, 256);
     GetWindowTextW(hwnd, title, 256);
-    logger::Info(L"找到广播窗口: 类名=" + std::wstring(cls) + L" 标题=" + std::wstring(title));
-
-    // 如果已经窗口化，不做重复操作
-    if (IsBroadcastWindowed(hwnd)) {
-        logger::Info(L"广播窗口已处于窗口化状态");
-        return true;
-    }
+    logger::Info(L"窗口化广播窗口: " + std::wstring(title));
 
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // 方案1（MythwareToolkit 方法）：发送 WM_COMMAND(1004, BM_CLICK) 让极域自己切换
-    // 这是极域广播窗口内部"窗口化"按钮的控件 ID
-    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1004, BM_CLICK), 0);
-
-    // 等待极域处理消息（异步 PostMessage，给一点时间）
-    Sleep(300);
-
-    // 检查是否成功窗口化
-    if (IsBroadcastWindowed(hwnd)) {
-        // 窗口化成功，调整位置和大小（参考 JiYuTrainer：3/4 宽 × 4/5 高，居中）
-        int w = (int)(screenW * 3.0 / 4.0);
-        int h = (int)(screenH * 4.0 / 5.0);
-        int x = (screenW - w) / 2;
-        int y = (screenH - h) / 2;
-        SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_SHOWWINDOW);
-        ResizeBroadcastChild(hwnd, w, h);
-        logger::Info(L"已通过 WM_COMMAND(1004) 将广播窗口化");
-        return true;
-    }
-
-    // 方案2（JiYuTrainer 方法）：直接修改窗口样式
+    // JiYuTrainer 风格：直接修改窗口样式 + XOR 反转 BORDER/OVERLAPPEDWINDOW
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
 
-    // 添加边框 + 标题栏 + 可调大小 + 系统菜单
-    style |= WS_BORDER | WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+    // XOR 反转 BORDER 和 OVERLAPPEDWINDOW 标志（核心技巧）
+    style ^= (WS_BORDER | WS_OVERLAPPEDWINDOW);
     SetWindowLong(hwnd, GWL_STYLE, style);
 
-    // 去掉置顶
-    exStyle &= ~WS_EX_TOPMOST;
+    // 默认情况下广播窗口化时应该不置顶（与 g_setAllowGbTop 状态一致）
+    if (!g_setAllowGbTop) {
+        exStyle &= ~WS_EX_TOPMOST;
+    } else {
+        exStyle |= WS_EX_TOPMOST;
+    }
     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    int w = (int)(screenW * 3.0 / 4.0);
-    int h = (int)(screenH * 4.0 / 5.0);
+    // 重新计算窗口位置和大小（3/4 宽 × 4/5 高，居中）
+    int w = (int)((double)screenW * (3.0 / 4.0));
+    int h = (int)((double)screenH * (4.0 / 5.0));
     int x = (screenW - w) / 2;
     int y = (screenH - h) / 2;
-    SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h,
+
+    SetWindowPos(hwnd, g_setAllowGbTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 x, y, w, h,
                  SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME);
 
-    // 通知窗口重排，调整子窗口
+    // 调整子窗口 + 通知窗口重排
     SendMessageW(hwnd, WM_SIZE, 0, MAKEWPARAM(w, h));
     ResizeBroadcastChild(hwnd, w, h);
 
-    logger::Info(L"已通过修改样式将广播窗口化");
+    logger::Info(L"广播窗口已窗口化");
     return true;
 }
 
+// 广播全屏化（参考 JiYuTrainer FakeFull(true) / ManualFull(true)）
 bool BroadcastToFullscreen()
 {
     HWND hwnd = FindBroadcastWindow();
@@ -457,81 +398,118 @@ bool BroadcastToFullscreen()
         return false;
     }
 
+    wchar_t title[256] = {};
+    GetWindowTextW(hwnd, title, 256);
+    logger::Info(L"全屏化广播窗口: " + std::wstring(title));
+
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // 如果已经是全屏，不做重复操作
-    if (!IsBroadcastWindowed(hwnd)) {
-        logger::Info(L"广播窗口已处于全屏状态");
-        return true;
-    }
-
-    // 方案1（MythwareToolkit 方法）：发送 WM_COMMAND(1004, BM_CLICK) 让极域自己切换
-    PostMessageW(hwnd, WM_COMMAND, MAKEWPARAM(1004, BM_CLICK), 0);
-    Sleep(300);
-
-    if (!IsBroadcastWindowed(hwnd)) {
-        // 全屏化成功
-        logger::Info(L"已通过 WM_COMMAND(1004) 将广播全屏化");
-        return true;
-    }
-
-    // 方案2（JiYuTrainer 方法）：直接修改窗口样式
+    // JiYuTrainer 风格：直接修改窗口样式
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
     LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
 
-    // XOR 移除边框和 overlapped 样式
-    style &= ~(WS_BORDER | WS_OVERLAPPEDWINDOW);
-    style |= WS_POPUP;
+    // XOR 反转 BORDER 和 OVERLAPPEDWINDOW 标志
+    style ^= (WS_BORDER | WS_OVERLAPPEDWINDOW);
     SetWindowLong(hwnd, GWL_STYLE, style);
 
-    // 添加置顶
+    // 全屏时强制置顶
     exStyle |= WS_EX_TOPMOST;
     SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screenW, screenH, SWP_SHOWWINDOW);
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screenW, screenH,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME);
 
-    // 通知窗口重排，调整子窗口
+    // 通知窗口重排 + 调整子窗口
     SendMessageW(hwnd, WM_SIZE, 0, MAKEWPARAM(screenW, screenH));
     ResizeBroadcastChild(hwnd, screenW, screenH);
 
-    logger::Info(L"已通过修改样式将广播全屏化");
+    logger::Info(L"广播窗口已全屏化");
     return true;
 }
 
+// 广播窗口置顶开关（参考 JiYuTrainer::ManualTop）
 bool SetBroadcastTopmost(bool enable)
 {
-    HWND hwnd = FindBroadcastWindow();
-    if (!hwnd) {
-        logger::Warn(L"未找到广播窗口，无法设置置顶");
-        g_broadcastTopmostEnabled = enable;
-        EnsureBroadcastTopmostThread();
-        return false;
-    }
-
+    // 模仿 JiYuTrainer 思路：修改全局状态，线程持续维持
     g_broadcastTopmostEnabled = enable;
-    EnsureBroadcastTopmostThread();
+    g_setAllowGbTop = enable;
 
-    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    if (enable) {
-        exStyle |= WS_EX_TOPMOST;
-        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        logger::Info(L"已将广播窗口设为置顶（持续维持）");
+    // 立即尝试设置当前窗口
+    HWND hwnd = FindBroadcastWindow();
+    if (hwnd) {
+        LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        if (enable) {
+            exStyle |= WS_EX_TOPMOST;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        } else {
+            exStyle &= ~WS_EX_TOPMOST;
+            SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        logger::Info(enable ? L"广播窗口置顶已开启" : L"广播窗口置顶已关闭");
     } else {
-        exStyle &= ~WS_EX_TOPMOST;
-        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
-        SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        logger::Info(L"已取消广播窗口置顶（持续维持）");
+        logger::Info(enable ? L"广播窗口置顶已开启（等待广播窗口出现）"
+                            : L"广播窗口置顶已关闭（等待广播窗口出现）");
     }
+
+    // 启动持续维持线程（JiYuTrainer 风格）
+    EnsureBroadcastFixThread();
     return true;
 }
 
 bool IsBroadcastTopmost()
 {
     return g_broadcastTopmostEnabled;
+}
+
+// === JiYuTrainer 风格：持续监控广播窗口的线程 ===
+// 定期检查广播窗口，根据全局状态修复其置顶/窗口化
+static DWORD WINAPI BroadcastFixThreadProc(LPVOID)
+{
+    int screenW_cache = GetSystemMetrics(SM_CXSCREEN);
+    int screenH_cache = GetSystemMetrics(SM_CYSCREEN);
+
+    while (g_broadcastFixRunning) {
+        HWND hwnd = FindBroadcastWindow();
+        if (hwnd) {
+            // 根据 g_setAllowGbTop 状态修复
+            LONG oldLong = GetWindowLong(hwnd, GWL_EXSTYLE);
+            if (!g_setAllowGbTop && (oldLong & WS_EX_TOPMOST)) {
+                SetWindowLong(hwnd, GWL_EXSTYLE, oldLong ^ WS_EX_TOPMOST);
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            } else if (g_setAllowGbTop && !(oldLong & WS_EX_TOPMOST)) {
+                SetWindowLong(hwnd, GWL_EXSTYLE, oldLong | WS_EX_TOPMOST);
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+        }
+
+        // 100ms 检查一次（JiYuTrainer 用 SetTimer 100ms）
+        Sleep(100);
+    }
+    return 0;
+}
+
+static void EnsureBroadcastFixThread()
+{
+    if (g_hBroadcastFixThread) return;
+    g_broadcastFixRunning = true;
+    g_hBroadcastFixThread = CreateThread(nullptr, 0, BroadcastFixThreadProc, nullptr, 0, nullptr);
+}
+
+static void StopBroadcastFixThread()
+{
+    g_broadcastFixRunning = false;
+    if (g_hBroadcastFixThread) {
+        WaitForSingleObject(g_hBroadcastFixThread, 1000);
+        CloseHandle(g_hBroadcastFixThread);
+        g_hBroadcastFixThread = nullptr;
+    }
 }
 
 struct BlackScreenData { HWND hwnd; };
@@ -703,6 +681,7 @@ void CleanupBroadcastTopmost()
         CloseHandle(g_hBroadcastTopmostThread);
         g_hBroadcastTopmostThread = nullptr;
     }
+    StopBroadcastFixThread();
 }
 
 } // namespace pctl
