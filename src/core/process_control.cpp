@@ -312,10 +312,10 @@ static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
     GetWindowThreadProcessId(hwnd, &windowPid);
     if (windowPid != d->pid) return TRUE;
 
-    // 2. 类名前缀匹配："Afx:"（MFC 框架）
-    char clsA[8] = {};
+    // 2. 类名前缀匹配："Afx:"（MFC 框架）- 使用 strnicmp 前缀匹配
+    char clsA[256] = {};
     GetClassNameA(hwnd, clsA, sizeof(clsA));
-    if (_stricmp(clsA, "Afx:") != 0) return TRUE;
+    if (_strnicmp(clsA, "Afx:", 4) != 0) return TRUE;
 
     // 3. 标题匹配
     wchar_t title[256] = {};
@@ -332,7 +332,7 @@ static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
     if (!isBroadcast) return TRUE;
 
     d->hwnd = hwnd;
-    return FALSE;  // 找到了，停止枚举
+    return FALSE;
 }
 
 static HWND FindBroadcastWindow()
