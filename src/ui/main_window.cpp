@@ -35,7 +35,7 @@ static DWORD WINAPI TopmostThreadProc(LPVOID)
             SetWindowPos(g_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
-        Sleep(500);
+        Sleep(1000);
     }
     return 0;
 }

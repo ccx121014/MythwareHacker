@@ -11,13 +11,28 @@ static bool g_mythwareSuspended = false;
 static bool g_broadcastTopmostEnabled = false;
 static HANDLE g_hBroadcastTopmostThread = nullptr;
 static bool g_broadcastTopmostRunning = false;
+static HWND g_cachedBroadcastHwnd = nullptr;
+static DWORD g_cachedBroadcastPid = 0;
+static DWORD g_lastBroadcastFindTick = 0;
 
 static HWND FindBroadcastWindow();
 
 static DWORD WINAPI BroadcastTopmostThreadProc(LPVOID)
 {
     while (g_broadcastTopmostRunning) {
-        HWND hwnd = FindBroadcastWindow();
+        // 1 秒间隔，比 500ms 更省资源
+        Sleep(1000);
+
+        // 缓存广播窗口 HWND，避免每次都 EnumWindows
+        DWORD now = GetTickCount();
+        HWND hwnd = g_cachedBroadcastHwnd;
+        if (!hwnd || !IsWindow(hwnd) || now - g_lastBroadcastFindTick > 5000) {
+            // 缓存失效或超过 5 秒，重新查找
+            hwnd = FindBroadcastWindow();
+            g_cachedBroadcastHwnd = hwnd;
+            g_lastBroadcastFindTick = GetTickCount();
+        }
+
         if (hwnd) {
             LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
             bool isTopmost = (exStyle & WS_EX_TOPMOST) != 0;
@@ -31,7 +46,6 @@ static DWORD WINAPI BroadcastTopmostThreadProc(LPVOID)
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
         }
-        Sleep(500);
     }
     return 0;
 }
@@ -104,6 +118,9 @@ static std::wstring GetMythwarePath()
     return L"";
 }
 
+static std::wstring g_cachedVersion;
+static DWORD g_cachedPid = 0;
+
 MythwareStatus GetMythwareStatus()
 {
     MythwareStatus status = {};
@@ -112,48 +129,47 @@ MythwareStatus GetMythwareStatus()
 
     if (status.pid == 0) {
         g_mythwareSuspended = false;
+        g_cachedPid = 0;
+        g_cachedVersion.clear();
         return status;
     }
 
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, status.pid);
-    if (!hProcess) {
-        status.state = MythwareState::NoResponse;
-        return status;
-    }
-
-    // 获取版本信息
-    wchar_t exePath[MAX_PATH] = {};
-    if (GetModuleFileNameExW(hProcess, nullptr, exePath, MAX_PATH) > 0) {
-        status.exePath = exePath;
-        // 读取版本资源
-        DWORD dummy = 0;
-        DWORD verSize = GetFileVersionInfoSizeW(exePath, &dummy);
-        if (verSize > 0) {
-            std::vector<BYTE> verData(verSize);
-            if (GetFileVersionInfoW(exePath, 0, verSize, verData.data())) {
-                VS_FIXEDFILEINFO* ffi = nullptr;
-                UINT ffiLen = 0;
-                if (VerQueryValueW(verData.data(), L"\\", (LPVOID*)&ffi, &ffiLen) && ffi) {
-                    wchar_t buf[64];
-                    swprintf(buf, 64, L"%d.%d.%d.%d",
-                             HIWORD(ffi->dwProductVersionMS), LOWORD(ffi->dwProductVersionMS),
-                             HIWORD(ffi->dwProductVersionLS), LOWORD(ffi->dwProductVersionLS));
-                    status.version = buf;
+    // 如果 PID 变了或版本缓存为空，重新查询版本号（重量级操作，只做一次）
+    if (status.pid != g_cachedPid || g_cachedVersion.empty()) {
+        HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, status.pid);
+        if (hProcess) {
+            wchar_t exePath[MAX_PATH] = {};
+            if (GetModuleFileNameExW(hProcess, nullptr, exePath, MAX_PATH) > 0) {
+                status.exePath = exePath;
+                DWORD dummy = 0;
+                DWORD verSize = GetFileVersionInfoSizeW(exePath, &dummy);
+                if (verSize > 0) {
+                    std::vector<BYTE> verData(verSize);
+                    if (GetFileVersionInfoW(exePath, 0, verSize, verData.data())) {
+                        VS_FIXEDFILEINFO* ffi = nullptr;
+                        UINT ffiLen = 0;
+                        if (VerQueryValueW(verData.data(), L"\\", (LPVOID*)&ffi, &ffiLen) && ffi) {
+                            wchar_t buf[64];
+                            swprintf(buf, 64, L"%d.%d.%d.%d",
+                                     HIWORD(ffi->dwProductVersionMS), LOWORD(ffi->dwProductVersionMS),
+                                     HIWORD(ffi->dwProductVersionLS), LOWORD(ffi->dwProductVersionLS));
+                            g_cachedVersion = buf;
+                        }
+                    }
                 }
             }
+            CloseHandle(hProcess);
         }
+        g_cachedPid = status.pid;
     }
+    status.version = g_cachedVersion;
 
-    // 简化：判断是否无响应
     if (g_mythwareSuspended) {
         status.state = MythwareState::Suspended;
-    } else if (WaitForInputIdle(hProcess, 1000) == WAIT_FAILED) {
-        status.state = MythwareState::NoResponse;
     } else {
         status.state = MythwareState::Running;
     }
 
-    CloseHandle(hProcess);
     return status;
 }
 
@@ -164,6 +180,12 @@ bool KillMythware()
         logger::Info(L"极域未运行，无需杀进程");
         return true;
     }
+
+    // 清除缓存
+    g_cachedPid = 0;
+    g_cachedVersion.clear();
+    g_cachedBroadcastPid = 0;
+    g_cachedBroadcastHwnd = nullptr;
 
     // 方法1：直接 TerminateProcess（需要 PROCESS_TERMINATE 权限）
     HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
@@ -315,7 +337,24 @@ static BOOL CALLBACK FindBroadcastProc(HWND hwnd, LPARAM lParam)
 
 static HWND FindBroadcastWindow()
 {
-    DWORD pid = FindProcessByName(STUDENT_MAIN);
+    // 缓存极域 PID，避免每次都做进程快照
+    DWORD pid = g_cachedBroadcastPid;
+    if (pid == 0) {
+        pid = FindProcessByName(STUDENT_MAIN);
+        if (pid != 0) g_cachedBroadcastPid = pid;
+    }
+    // 验证缓存的 PID 是否仍然有效
+    else {
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!h) {
+            g_cachedBroadcastPid = 0;
+            pid = FindProcessByName(STUDENT_MAIN);
+            if (pid != 0) g_cachedBroadcastPid = pid;
+        } else {
+            CloseHandle(h);
+        }
+    }
+
     if (pid == 0) return nullptr;
 
     FindBroadcastData data = { pid, nullptr };

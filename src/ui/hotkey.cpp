@@ -20,6 +20,9 @@ static bool  g_altDown = false;
 static bool  g_hookRunning = false;
 static HANDLE g_hHookThread = nullptr;
 static HANDLE g_hBlockInputThread = nullptr;
+static DWORD  g_lastHookInstallTick = 0;
+static DWORD  g_lastBlockInputTick = 0;
+static bool   g_lastHotkeyBlocked = false;  // 上次快捷键是否被极域拦截
 
 // Ctrl+Shift 快捷键映射表
 static struct { UINT vk; int id; const wchar_t* name; } g_ctrlShiftKeys[] = {
@@ -112,33 +115,63 @@ static void DoInstallHook()
     }
     g_hLowLevelHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc,
                                          GetModuleHandleW(nullptr), 0);
+    g_lastHookInstallTick = GetTickCount();
 }
 
-// 钩子竞争线程：定期重新安装钩子，确保我们的钩子在钩子链最前面
-// （极域也会安装键盘钩子，后安装的钩子先被调用）
+// 钩子维持线程（参考 MythwareToolkit：低频重装，非高频竞争）
+// 策略：只在检测到极域可能覆盖了我们的钩子时才重装，大幅减少系统开销
 static DWORD WINAPI HookCompeteThreadProc(LPVOID)
 {
     while (g_hookRunning) {
-        // 每 300ms 重新安装一次钩子，确保在极域钩子之后安装
-        // 这样我们的钩子在最前面，优先处理快捷键
-        DoInstallHook();
-        Sleep(300);
+        // 基础间隔 3 秒（MythwareToolkit 便携版 250ms 是因为它没有其他线程，
+        // 我们有多个后台线程，需要更长的间隔避免系统卡顿）
+        Sleep(3000);
+
+        // 只在极域运行时才重装钩子，避免空转
+        // 简化检测：如果距上次安装超过 3 秒就重装一次
+        DWORD now = GetTickCount();
+        if (now - g_lastHookInstallTick > 3000) {
+            DoInstallHook();
+        }
     }
     return 0;
 }
 
-// BlockInput 绕过线程：定期在极域进程内解除键盘阻塞
+// BlockInput 绕过线程（极低频，只在极域运行且键盘被锁时才执行）
 static DWORD WINAPI BlockInputBypassThreadProc(LPVOID)
 {
     while (g_hookRunning) {
-        // 只在极域运行时才解除，避免空转消耗资源
-        if (pctl::GetMythwareStatus().state == pctl::MythwareState::Running) {
-            // 1. 在极域进程内远程调用 BlockInput(FALSE)
-            pctl::UnblockInputInMythware();
-            // 2. 自己也尝试调用（某些情况下可能有效）
-            BlockInput(FALSE);
+        // 5 秒间隔，远低于原来的 200-500ms
+        // BlockInput 只在极域主动发起键盘锁定时需要解除
+        // 极域不会每秒都调 BlockInput，5 秒检查一次足够
+        Sleep(5000);
+
+        DWORD now = GetTickCount();
+        if (now - g_lastBlockInputTick < 5000) continue;
+
+        // 只在极域运行时才尝试解除
+        // 用简单 PID 检测代替完整的 GetMythwareStatus（避免快照+版本查询开销）
+        DWORD pid = 0;
+        HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (hSnap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W pe = {};
+            pe.dwSize = sizeof(pe);
+            if (Process32FirstW(hSnap, &pe)) {
+                do {
+                    if (_wcsicmp(pe.szExeFile, L"StudentMain.exe") == 0) {
+                        pid = pe.th32ProcessID;
+                        break;
+                    }
+                } while (Process32NextW(hSnap, &pe));
+            }
+            CloseHandle(hSnap);
         }
-        Sleep(500);
+
+        if (pid != 0) {
+            pctl::UnblockInputInMythware();
+            BlockInput(FALSE);
+            g_lastBlockInputTick = GetTickCount();
+        }
     }
     return 0;
 }
