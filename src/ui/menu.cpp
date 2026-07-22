@@ -8,6 +8,7 @@
 #include "core/password_calc.h"
 #include "utils/window_utils.h"
 #include "utils/log.h"
+#include <set>
 
 namespace menu {
 
@@ -82,12 +83,23 @@ void ShowTrayMenu(HWND hWnd)
     auto allWindows = wutil::EnumAllTopLevelWindows();
     for (auto& w : allWindows) w.hidden = whide::IsHidden(w.hwnd);
 
-    if (!allWindows.empty()) {
+    // 过滤无标题窗口 + 按进程名+标题去重
+    std::vector<wutil::WindowInfo> filtered;
+    std::set<std::wstring> seen;
+    for (const auto& w : allWindows) {
+        if (w.title == L"(无标题)") continue;
+        std::wstring key = w.processName + L"|" + w.title;
+        if (seen.count(key)) continue;
+        seen.insert(key);
+        filtered.push_back(w);
+    }
+
+    if (!filtered.empty()) {
         AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"所有窗口 (点击切换隐蔽):");
         g_menuWindowMap.clear();
         UINT menuId = ID_TRAY_WINDOW_LIST_BASE;
 
-        for (const auto& w : allWindows) {
+        for (const auto& w : filtered) {
             std::wstring item = L"  ";
             if (w.hidden) {
                 item += L"[隐] ";

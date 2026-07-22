@@ -43,7 +43,20 @@ BOOL IsWindowEligible(HWND hwnd)
     if (!IsWindowVisible(hwnd)) return FALSE;
 
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
     if (style & WS_CHILD) return FALSE;
+
+    // 过滤工具窗口（任务栏/系统托盘等）
+    if (exStyle & WS_EX_TOOLWINDOW) return FALSE;
+    // 过滤不可激活的窗口（通常是无意义的辅助窗口）
+    if (exStyle & WS_EX_NOACTIVATE) return FALSE;
+
+    // 过滤尺寸过小的窗口（弹窗、提示等）
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    int w = rc.right - rc.left;
+    int h = rc.bottom - rc.top;
+    if (w < 5 || h < 5) return FALSE;
 
     wchar_t className[256] = {};
     GetClassNameW(hwnd, className, 256);
