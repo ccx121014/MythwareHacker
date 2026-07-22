@@ -468,15 +468,19 @@ bool IsBroadcastTopmost()
 
 // === JiYuTrainer 风格：持续监控广播窗口的线程 ===
 // 定期检查广播窗口，根据全局状态修复其置顶/窗口化
+// 注意：只有用户显式设置过置顶开关后才执行修改，避免默认情况下与极域争抢
 static DWORD WINAPI BroadcastFixThreadProc(LPVOID)
 {
-    int screenW_cache = GetSystemMetrics(SM_CXSCREEN);
-    int screenH_cache = GetSystemMetrics(SM_CYSCREEN);
-
     while (g_broadcastFixRunning) {
+        // 只有用户显式设置过置顶开关，才执行修改
+        // 默认状态下不干涉极域窗口
+        if (!g_broadcastTopmostEnabled && !g_setAllowGbTop) {
+            Sleep(500);
+            continue;
+        }
+
         HWND hwnd = FindBroadcastWindow();
         if (hwnd) {
-            // 根据 g_setAllowGbTop 状态修复
             LONG oldLong = GetWindowLong(hwnd, GWL_EXSTYLE);
             if (!g_setAllowGbTop && (oldLong & WS_EX_TOPMOST)) {
                 SetWindowLong(hwnd, GWL_EXSTYLE, oldLong ^ WS_EX_TOPMOST);
@@ -489,8 +493,7 @@ static DWORD WINAPI BroadcastFixThreadProc(LPVOID)
             }
         }
 
-        // 100ms 检查一次（JiYuTrainer 用 SetTimer 100ms）
-        Sleep(100);
+        Sleep(500);
     }
     return 0;
 }
