@@ -357,19 +357,13 @@ bool BroadcastToWindowed()
 
     // JiYuTrainer 风格：直接修改窗口样式 + XOR 反转 BORDER/OVERLAPPEDWINDOW
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
-    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
 
     // XOR 反转 BORDER 和 OVERLAPPEDWINDOW 标志（核心技巧）
     style ^= (WS_BORDER | WS_OVERLAPPEDWINDOW);
     SetWindowLong(hwnd, GWL_STYLE, style);
 
-    // 默认情况下广播窗口化时应该不置顶（与 g_setAllowGbTop 状态一致）
-    if (!g_setAllowGbTop) {
-        exStyle &= ~WS_EX_TOPMOST;
-    } else {
-        exStyle |= WS_EX_TOPMOST;
-    }
-    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+    // 不修改置顶状态，让极域自己决定或由用户通过置顶开关控制
+    // 这样避免与极域争抢
 
     // 重新计算窗口位置和大小（3/4 宽 × 4/5 高，居中）
     int w = (int)((double)screenW * (3.0 / 4.0));
@@ -377,9 +371,8 @@ bool BroadcastToWindowed()
     int x = (screenW - w) / 2;
     int y = (screenH - h) / 2;
 
-    SetWindowPos(hwnd, g_setAllowGbTop ? HWND_TOPMOST : HWND_NOTOPMOST,
-                 x, y, w, h,
-                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME);
+    SetWindowPos(hwnd, NULL, x, y, w, h,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME | SWP_NOZORDER);
 
     // 调整子窗口 + 通知窗口重排
     SendMessageW(hwnd, WM_SIZE, 0, MAKEWPARAM(w, h));
@@ -407,18 +400,15 @@ bool BroadcastToFullscreen()
 
     // JiYuTrainer 风格：直接修改窗口样式
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
-    LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
 
     // XOR 反转 BORDER 和 OVERLAPPEDWINDOW 标志
     style ^= (WS_BORDER | WS_OVERLAPPEDWINDOW);
     SetWindowLong(hwnd, GWL_STYLE, style);
 
-    // 全屏时强制置顶
-    exStyle |= WS_EX_TOPMOST;
-    SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
+    // 不修改置顶状态，让极域自己决定或由用户通过置顶开关控制
 
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, screenW, screenH,
-                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME);
+    SetWindowPos(hwnd, NULL, 0, 0, screenW, screenH,
+                 SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_DRAWFRAME | SWP_NOZORDER);
 
     // 通知窗口重排 + 调整子窗口
     SendMessageW(hwnd, WM_SIZE, 0, MAKEWPARAM(screenW, screenH));
