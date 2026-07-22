@@ -83,14 +83,13 @@ void ShowTrayMenu(HWND hWnd)
     auto allWindows = wutil::EnumAllTopLevelWindows();
     for (auto& w : allWindows) w.hidden = whide::IsHidden(w.hwnd);
 
-    // 过滤无标题窗口 + 按进程名+标题去重
+    // 过滤无标题窗口 + 按进程名去重（同一进程只保留一个窗口）
     std::vector<wutil::WindowInfo> filtered;
     std::set<std::wstring> seen;
     for (const auto& w : allWindows) {
         if (w.title == L"(无标题)") continue;
-        std::wstring key = w.processName + L"|" + w.title;
-        if (seen.count(key)) continue;
-        seen.insert(key);
+        if (seen.count(w.processName)) continue;
+        seen.insert(w.processName);
         filtered.push_back(w);
     }
 
