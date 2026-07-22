@@ -1,8 +1,6 @@
 bin/obj_*/
 bin/*.o
 bin/*.obj
-*.exe
-*.dll
 *.pdb
 *.ilk
 *.exp
