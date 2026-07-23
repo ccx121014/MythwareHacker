@@ -32,6 +32,7 @@ static struct { UINT vk; int id; const wchar_t* name; } g_ctrlShiftKeys[] = {
     { 'F', ID_HOTKEY_FLOAT,            L"Ctrl+Shift+F" },
     { 'K', ID_HOTKEY_KILL_MYTHWARE,    L"Ctrl+Shift+K" },
     { 'W', ID_HOTKEY_BROADCAST_WIN,    L"Ctrl+Shift+W" },
+    { 'G', ID_HOTKEY_BROADCAST_FULLSCREEN, L"Ctrl+Shift+G" },
     { 'X', ID_HOTKEY_EXIT_BLACK,       L"Ctrl+Shift+X" },
     { 'M', ID_HOTKEY_SUSPEND_RESUME,   L"Ctrl+Shift+M" },
     { 'C', ID_HOTKEY_KILL_CLASSROOM,   L"Ctrl+Shift+C" },
@@ -233,6 +234,7 @@ void RegisterAll(HWND hWnd)
         { ID_HOTKEY_FLOAT,            MOD_CONTROL | MOD_SHIFT, 'F', L"Ctrl+Shift+F" },
         { ID_HOTKEY_KILL_MYTHWARE,    MOD_CONTROL | MOD_SHIFT, 'K', L"Ctrl+Shift+K" },
         { ID_HOTKEY_BROADCAST_WIN,    MOD_CONTROL | MOD_SHIFT, 'W', L"Ctrl+Shift+W" },
+        { ID_HOTKEY_BROADCAST_FULLSCREEN, MOD_CONTROL | MOD_SHIFT, 'G', L"Ctrl+Shift+G" },
         { ID_HOTKEY_EXIT_BLACK,       MOD_CONTROL | MOD_SHIFT, 'X', L"Ctrl+Shift+X" },
         { ID_HOTKEY_SUSPEND_RESUME,   MOD_CONTROL | MOD_SHIFT, 'M', L"Ctrl+Shift+M" },
         { ID_HOTKEY_KILL_CLASSROOM,   MOD_CONTROL | MOD_SHIFT, 'C', L"Ctrl+Shift+C" },
@@ -256,6 +258,7 @@ void UnregisterAll(HWND hWnd)
     UnregisterHotKey(hWnd, ID_HOTKEY_FLOAT);
     UnregisterHotKey(hWnd, ID_HOTKEY_KILL_MYTHWARE);
     UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_WIN);
+    UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_FULLSCREEN);
     UnregisterHotKey(hWnd, ID_HOTKEY_EXIT_BLACK);
     UnregisterHotKey(hWnd, ID_HOTKEY_SUSPEND_RESUME);
     UnregisterHotKey(hWnd, ID_HOTKEY_KILL_CLASSROOM);
@@ -291,6 +294,10 @@ bool Handle(WPARAM wParam)
     case ID_HOTKEY_BROADCAST_WIN:
         pctl::BroadcastToWindowed();
         logger::Info(L"已将广播窗口化");
+        return true;
+    case ID_HOTKEY_BROADCAST_FULLSCREEN:
+        pctl::BroadcastToFullscreen();
+        logger::Info(L"已将广播全屏化");
         return true;
     case ID_HOTKEY_EXIT_BLACK:
         pctl::ExitBlackScreen();

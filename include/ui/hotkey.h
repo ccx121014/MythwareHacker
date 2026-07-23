@@ -13,11 +13,12 @@ enum {
     ID_HOTKEY_FLOAT         = 104,  // Ctrl+Shift+F 悬浮窗
     ID_HOTKEY_KILL_MYTHWARE = 105,  // Ctrl+Shift+K 强杀极域
     ID_HOTKEY_BROADCAST_WIN = 106,  // Ctrl+Shift+W 广播窗口化
-    ID_HOTKEY_EXIT_BLACK    = 107,  // Ctrl+Shift+B 退出黑屏
+    ID_HOTKEY_EXIT_BLACK    = 107,  // Ctrl+Shift+X 退出黑屏
     ID_HOTKEY_SUSPEND_RESUME= 108,  // Ctrl+Shift+M 挂起/恢复极域
     ID_HOTKEY_KILL_CLASSROOM= 109,  // Ctrl+Shift+C 杀掉机房助手
     ID_HOTKEY_UNBLOCK_ALL   = 110,  // Ctrl+Shift+U 一键解除全部
     ID_HOTKEY_RESTART_EXPLORER = 111, // Ctrl+Shift+R 重启资源管理器
+    ID_HOTKEY_BROADCAST_FULLSCREEN = 112, // Ctrl+Shift+G 广播全屏化
 };
 
 // 注册所有全局快捷键（含低级键盘钩子，绕过极域键盘禁用）
