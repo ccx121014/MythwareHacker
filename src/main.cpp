@@ -371,6 +371,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
     case WM_DESTROY:
         StopMonitor();
+        mctl::StopClassroomMonitor();
         spctl::DisableSelfProtect();
         whide::RestoreAll();
         persist::Delete();

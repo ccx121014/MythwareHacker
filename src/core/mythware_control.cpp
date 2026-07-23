@@ -270,7 +270,106 @@ KillResult KillClassroomHelper()
     result.killedCount += ScanAndKillDynamicProcesses(result.killedNames);
 
     logger::Info(L"共杀掉 " + WSTR(result.killedCount) + L" 个助手进程");
+
+    // 5. 启动持续监控线程，防止机房助手1秒后重启
+    if (result.killedCount > 0) {
+        StartClassroomMonitor();
+    }
+
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// 机房助手持续监控线程
+// 解决杀完后1秒又重启的问题：后台每2秒检查一次，自动杀掉
+// ---------------------------------------------------------------------------
+
+static HANDLE g_hClassroomMonitorThread = nullptr;
+static bool g_classroomMonitorRunning = false;
+
+// 轻量级检查：只扫描固定进程名（不做动态名生成和完整扫描，避免卡顿）
+static bool IsAnyClassroomProcessRunning()
+{
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap == INVALID_HANDLE_VALUE) return false;
+
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof(pe);
+    bool found = false;
+
+    if (Process32FirstW(hSnap, &pe)) {
+        do {
+            std::wstring exeName = pe.szExeFile;
+            size_t dot = exeName.find_last_of(L'.');
+            std::wstring baseName = (dot != std::wstring::npos) ? exeName.substr(0, dot) : exeName;
+
+            for (const auto& name : CLASSROOM_PROCESS_NAMES) {
+                if (_wcsicmp(baseName.c_str(), name.c_str()) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        } while (Process32NextW(hSnap, &pe));
+    }
+    CloseHandle(hSnap);
+    return found;
+}
+
+// 轻量级杀掉：只杀固定进程名
+static int KillClassroomProcessesQuick()
+{
+    std::vector<std::wstring> dummy;
+    int count = 0;
+    for (const auto& name : CLASSROOM_PROCESS_NAMES) {
+        count += KillProcessByName(name, dummy);
+    }
+    return count;
+}
+
+static DWORD WINAPI ClassroomMonitorThreadProc(LPVOID)
+{
+    logger::Info(L"机房助手监控线程已启动（每2秒检查）");
+    while (g_classroomMonitorRunning) {
+        if (IsAnyClassroomProcessRunning()) {
+            logger::Info(L"监控线程发现机房助手进程，正在杀掉...");
+            // 再次停止服务（防止服务守护重启）
+            StopAndDeleteService(L"zmserv");
+            // 杀掉固定进程名
+            int killed = KillClassroomProcessesQuick();
+            if (killed > 0) {
+                logger::Info(L"监控线程杀掉 " + WSTR(killed) + L" 个机房助手进程");
+            }
+        }
+        Sleep(2000);
+    }
+    logger::Info(L"机房助手监控线程已停止");
+    return 0;
+}
+
+void StartClassroomMonitor()
+{
+    if (g_hClassroomMonitorThread) return;
+    g_classroomMonitorRunning = true;
+    g_hClassroomMonitorThread = CreateThread(nullptr, 0, ClassroomMonitorThreadProc, nullptr, 0, nullptr);
+}
+
+void StopClassroomMonitor()
+{
+    g_classroomMonitorRunning = false;
+    if (g_hClassroomMonitorThread) {
+        DWORD result = WaitForSingleObject(g_hClassroomMonitorThread, 500);
+        if (result != WAIT_OBJECT_0) {
+            TerminateThread(g_hClassroomMonitorThread, 0);
+        }
+        CloseHandle(g_hClassroomMonitorThread);
+        g_hClassroomMonitorThread = nullptr;
+    }
+}
+
+bool IsClassroomMonitorRunning()
+{
+    return g_hClassroomMonitorThread != nullptr && g_classroomMonitorRunning;
 }
 
 // ---------------------------------------------------------------------------

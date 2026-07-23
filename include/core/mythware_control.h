@@ -50,4 +50,10 @@ UnblockSysResult UnblockSystemPrograms();
 // 重启资源管理器
 bool RestartExplorer();
 
+// 机房助手持续监控线程（解决杀完后1秒又重启的问题）
+// KillClassroomHelper 成功后会自动启动监控
+void StartClassroomMonitor();
+void StopClassroomMonitor();
+bool IsClassroomMonitorRunning();
+
 } // namespace mctl
