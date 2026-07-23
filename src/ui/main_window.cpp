@@ -26,9 +26,6 @@ static HWND g_hPcName    = nullptr;
 static HWND g_hResult    = nullptr;
 static HFONT g_hFont     = nullptr;
 
-// 事件驱动置顶：无需后台线程，通过 WM_WINDOWPOSCHANGED 事件触发
-// 参考 MythwareToolkit 的实现，避免持续轮询导致卡顿
-
 static const int WIN_W = 620;
 static const int WIN_H = 460;
 
@@ -395,17 +392,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         mmi->ptMaxTrackSize.x = WIN_W;
         mmi->ptMaxTrackSize.y = WIN_H;
         return 0;
-    }
-
-    // 事件驱动置顶：仅当其他窗口把本窗口挤下去时才重新置顶
-    // 参考 MythwareToolkit 实现，避免后台线程持续轮询
-    case WM_WINDOWPOSCHANGED: {
-        WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*>(lParam);
-        if (!(wp->flags & SWP_NOZORDER) && IsWindowVisible(hWnd)) {
-            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        return DefWindowProcW(hWnd, message, wParam, lParam);
     }
 
     default:

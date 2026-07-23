@@ -9,11 +9,8 @@ static const wchar_t* STUDENT_MAIN = L"StudentMain.exe";
 
 static bool g_mythwareSuspended = false;
 
-// === 广播置顶开关（采用 JiYuTrainer 思路：全局变量 + 持续维持线程）===
+// 广播窗口置顶开关（采用 JiYuTrainer 思路：全局变量 + 持续维持线程）
 static bool g_broadcastTopmostEnabled = false;
-static bool g_setAllowGbTop = false;   // 模仿 JiYuTrainer: 允许广播窗口置顶
-static HANDLE g_hBroadcastTopmostThread = nullptr;
-static bool g_broadcastTopmostRunning = false;
 static HANDLE g_hBroadcastFixThread = nullptr;
 static bool g_broadcastFixRunning = false;
 
@@ -355,11 +352,10 @@ bool BroadcastToWindowed()
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // JiYuTrainer 风格：直接修改窗口样式 + XOR 反转 BORDER/OVERLAPPEDWINDOW
+    // 直接设置为窗口化样式（不是 XOR 翻转，避免多次点击失效）
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
-
-    // XOR 反转 BORDER 和 OVERLAPPEDWINDOW 标志（核心技巧）
-    style ^= (WS_BORDER | WS_OVERLAPPEDWINDOW);
+    style |= (WS_BORDER | WS_OVERLAPPEDWINDOW);
+    style &= ~WS_POPUP;
     SetWindowLong(hwnd, GWL_STYLE, style);
 
     // 不修改置顶状态，让极域自己决定或由用户通过置顶开关控制
@@ -398,11 +394,10 @@ bool BroadcastToFullscreen()
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
 
-    // JiYuTrainer 风格：直接修改窗口样式
+    // 直接设置为全屏样式（不是 XOR 翻转，避免多次点击失效）
     LONG style = GetWindowLong(hwnd, GWL_STYLE);
-
-    // XOR 反转 BORDER 和 OVERLAPPEDWINDOW 标志
-    style ^= (WS_BORDER | WS_OVERLAPPEDWINDOW);
+    style &= ~(WS_BORDER | WS_OVERLAPPEDWINDOW);
+    style |= WS_POPUP;
     SetWindowLong(hwnd, GWL_STYLE, style);
 
     // 不修改置顶状态，让极域自己决定或由用户通过置顶开关控制
@@ -421,9 +416,7 @@ bool BroadcastToFullscreen()
 // 广播窗口置顶开关（参考 JiYuTrainer::ManualTop）
 bool SetBroadcastTopmost(bool enable)
 {
-    // 模仿 JiYuTrainer 思路：修改全局状态，线程持续维持
     g_broadcastTopmostEnabled = enable;
-    g_setAllowGbTop = enable;
 
     // 立即尝试设置当前窗口
     HWND hwnd = FindBroadcastWindow();
@@ -446,8 +439,12 @@ bool SetBroadcastTopmost(bool enable)
                             : L"广播窗口置顶已关闭（等待广播窗口出现）");
     }
 
-    // 启动持续维持线程（JiYuTrainer 风格）
-    EnsureBroadcastFixThread();
+    // 用户开启置顶时才启动持续维持线程，关闭时停止线程
+    if (enable) {
+        EnsureBroadcastFixThread();
+    } else {
+        StopBroadcastFixThread();
+    }
     return true;
 }
 
@@ -456,35 +453,26 @@ bool IsBroadcastTopmost()
     return g_broadcastTopmostEnabled;
 }
 
-// === JiYuTrainer 风格：持续监控广播窗口的线程 ===
-// 定期检查广播窗口，根据全局状态修复其置顶/窗口化
-// 注意：只有用户显式设置过置顶开关后才执行修改，避免默认情况下与极域争抢
+// === 持续监控广播窗口的线程（仅用户开启置顶后才运行）===
+// 定期检查广播窗口，维持其置顶状态
+// 间隔拉长到 5 秒，避免与极域频繁争抢导致卡顿
 static DWORD WINAPI BroadcastFixThreadProc(LPVOID)
 {
+    logger::Info(L"广播置顶维持线程已启动（间隔 5000ms）");
     while (g_broadcastFixRunning) {
-        // 只有用户显式设置过置顶开关，才执行修改
-        // 默认状态下不干涉极域窗口
-        if (!g_broadcastTopmostEnabled && !g_setAllowGbTop) {
-            Sleep(2000);
-            continue;
-        }
-
         HWND hwnd = FindBroadcastWindow();
         if (hwnd) {
-            LONG oldLong = GetWindowLong(hwnd, GWL_EXSTYLE);
-            if (!g_setAllowGbTop && (oldLong & WS_EX_TOPMOST)) {
-                SetWindowLong(hwnd, GWL_EXSTYLE, oldLong ^ WS_EX_TOPMOST);
-                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            } else if (g_setAllowGbTop && !(oldLong & WS_EX_TOPMOST)) {
-                SetWindowLong(hwnd, GWL_EXSTYLE, oldLong | WS_EX_TOPMOST);
+            LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+            if (g_broadcastTopmostEnabled && !(exStyle & WS_EX_TOPMOST)) {
+                // 需要置顶但当前不是：设置置顶
+                SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOPMOST);
                 SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             }
         }
-
-        Sleep(2000);
+        Sleep(5000);
     }
+    logger::Info(L"广播置顶维持线程已停止");
     return 0;
 }
 
@@ -665,15 +653,6 @@ bool UnblockInputInMythware()
 
 void CleanupBroadcastTopmost()
 {
-    g_broadcastTopmostRunning = false;
-    if (g_hBroadcastTopmostThread) {
-        DWORD result = WaitForSingleObject(g_hBroadcastTopmostThread, 500);
-        if (result != WAIT_OBJECT_0) {
-            TerminateThread(g_hBroadcastTopmostThread, 0);
-        }
-        CloseHandle(g_hBroadcastTopmostThread);
-        g_hBroadcastTopmostThread = nullptr;
-    }
     StopBroadcastFixThread();
 }
 

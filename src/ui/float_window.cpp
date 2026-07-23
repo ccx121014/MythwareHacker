@@ -1,4 +1,4 @@
-// float_window.cpp - 圆形悬浮窗实现（带轮询置顶）
+// float_window.cpp - 圆形悬浮窗实现
 #include "ui/float_window.h"
 #include "ui/app_state.h"
 #include "ui/menu.h"
@@ -11,9 +11,6 @@ namespace floatw {
 static const int FLOAT_SIZE = 48;  // 圆窗直径
 static bool g_dragging = false;
 static POINT g_dragStart = {};
-
-// 事件驱动置顶：通过 WM_WINDOWPOSCHANGED 事件触发，无需后台线程
-// 参考 MythwareToolkit 实现，避免持续轮询导致卡顿
 
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -106,17 +103,6 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
 
     case WM_ERASEBKGND:
         return 1;
-
-    // 事件驱动置顶：仅当其他窗口把本窗口挤下去时才重新置顶
-    // 参考 MythwareToolkit 实现，避免后台线程持续轮询
-    case WM_WINDOWPOSCHANGED: {
-        WINDOWPOS* wp = reinterpret_cast<WINDOWPOS*>(lParam);
-        if (!(wp->flags & SWP_NOZORDER) && IsWindowVisible(hWnd)) {
-            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        return DefWindowProc(hWnd, message, wParam, lParam);
-    }
 
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);
