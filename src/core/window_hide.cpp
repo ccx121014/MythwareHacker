@@ -64,15 +64,12 @@ static void MoveOffscreen(HWND hwnd, HiddenWindow& hw)
     GetWindowPlacement(hwnd, &hw.origPlacement);
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
-    WINDOWPLACEMENT wp = hw.origPlacement;
-    LONG w = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
-    LONG h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top;
-    wp.rcNormalPosition.left   = screenW + 100;
-    wp.rcNormalPosition.top    = screenH + 100;
-    wp.rcNormalPosition.right  = screenW + 100 + w;
-    wp.rcNormalPosition.bottom = screenH + 100 + h;
-    wp.showCmd = SW_SHOWNORMAL;
-    SetWindowPlacement(hwnd, &wp);
+    RECT rc; GetWindowRect(hwnd, &rc);
+    LONG w = rc.right - rc.left;
+    LONG h = rc.bottom - rc.top;
+    // 用 SetWindowPos 直接移，比 SetWindowPlacement 更可靠
+    SetWindowPos(hwnd, nullptr, screenW + 100, screenH + 100, w, h,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
     hw.offscreenOk = true;
 }
 static void RestoreFromOffscreen(HWND hwnd, const HiddenWindow& hw)
@@ -192,33 +189,51 @@ static volatile bool g_cloakThreadRunning = false;
 
 static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
 {
-    logger::Info(L"Cloak维持线程已启动（间隔 3000ms）");
+    logger::Info(L"隐蔽维持线程已启动（间隔 3000ms）");
     while (g_cloakThreadRunning) {
         Sleep(3000);
         if (!g_cloakThreadRunning) break;
 
-        // 遍历所有用 cloak 方案隐蔽的窗口，重新设置
+        int screenW = GetSystemMetrics(SM_CXSCREEN);
+        int screenH = GetSystemMetrics(SM_CYSCREEN);
+
         for (auto& hw : g_hidden) {
-            if (!hw.cloakOk) continue;
             if (!IsWindow(hw.hwnd)) continue;
 
-            DWORD pid = 0;
-            GetWindowThreadProcessId(hw.hwnd, &pid);
-            if (pid == GetCurrentProcessId()) {
-                auto pfnCloak = GetDwmSetWindowAttribute();
-                if (pfnCloak) {
-                    BOOL cloak = TRUE;
-                    pfnCloak(hw.hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+            // 维持 Cloak
+            if (hw.cloakOk) {
+                DWORD pid = 0;
+                GetWindowThreadProcessId(hw.hwnd, &pid);
+                if (pid == GetCurrentProcessId()) {
+                    auto pfnCloak = GetDwmSetWindowAttribute();
+                    if (pfnCloak) {
+                        BOOL cloak = TRUE;
+                        pfnCloak(hw.hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+                    }
+                } else {
+                    struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
+                    RemoteCloakParams p = { hw.hwnd, TRUE };
+                    inject::InjectAndCall(hw.hwnd, L"MythwareHideHook", "RemoteCloakWindow",
+                                          &p, sizeof(p));
                 }
-            } else {
-                struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
-                RemoteCloakParams p = { hw.hwnd, TRUE };
-                inject::InjectAndCall(hw.hwnd, L"MythwareHideHook", "RemoteCloakWindow",
-                                      &p, sizeof(p));
+            }
+
+            // 维持屏幕外：检查窗口是否被移回来了
+            if (hw.offscreenOk) {
+                RECT rc;
+                if (GetWindowRect(hw.hwnd, &rc)) {
+                    // 窗口不在屏幕外了，重新移
+                    if (rc.left < screenW && rc.top < screenH) {
+                        LONG w = rc.right - rc.left;
+                        LONG h = rc.bottom - rc.top;
+                        SetWindowPos(hw.hwnd, nullptr, screenW + 100, screenH + 100,
+                                     w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
+                }
             }
         }
     }
-    logger::Info(L"Cloak维持线程已停止");
+    logger::Info(L"隐蔽维持线程已停止");
     return 0;
 }
 
@@ -318,7 +333,8 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
         MoveOffscreen(hwnd, hw);
         ok = true;
         method = L"移开(屏幕外)";
-        logger::Warn(L"Cloak和WDA均失败，降级到屏幕外: " + hw.title + L" 诊断: " + diagErr);
+        StartCloakMaintainThread();  // 启动维持线程防止窗口被移回来
+        logger::Warn(L"Cloak和WDA均失败，降级到屏幕外: " + hw.title);
     }
 
     diagErr.clear();
