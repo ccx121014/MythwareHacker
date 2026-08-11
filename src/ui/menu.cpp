@@ -105,9 +105,10 @@ void ShowTrayMenu(HWND hWnd)
                 const auto& hidden = whide::GetAll();
                 for (const auto& hw : hidden) {
                     if (hw.hwnd == w.hwnd) {
-                        if (hw.offscreenOk)      item += L"[移] ";
-                        else if (hw.wdaOk || hw.injectOk || hw.cloakOk) item += L"[截] ";
-                        else                     item += L"[?] ";
+                        if (hw.cloakOk)           item += L"[透] ";
+                        else if (hw.wdaOk)        item += L"[黑] ";
+                        else if (hw.offscreenOk)  item += L"[移] ";
+                        else                      item += L"[?] ";
                         break;
                     }
                 }
