@@ -58,21 +58,59 @@ void Cleanup()
 }
 
 // ============ 方案3：屏幕外移动 ============
-static void MoveOffscreen(HWND hwnd, HiddenWindow& hw)
+// 偏移量 10000px，确保任何多屏环境（含副屏在主屏右侧）都完全在屏幕外
+static const int OFFSCREEN_OFFSET = 10000;
+
+// 计算屏幕外目标坐标（虚拟桌面右下角外侧）
+static void CalcOffscreenTarget(int& targetX, int& targetY)
 {
-    hw.origPlacement.length = sizeof(WINDOWPLACEMENT);
-    GetWindowPlacement(hwnd, &hw.origPlacement);
-    // 虚拟桌面 = 所有显示器合并区域，确保多屏也能移出去
     int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
     int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
     int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    targetX = vx + vw + OFFSCREEN_OFFSET;
+    targetY = vy + vh + OFFSCREEN_OFFSET;
+}
+
+// 跨进程移动窗口的参数布局（必须与 hide_hook.cpp 的 RemoteMoveParams 一致）
+struct RemoteMoveParamsLayout {
+    HWND hwnd;
+    int  x;
+    int  y;
+    int  w;
+    int  h;
+};
+
+static void MoveOffscreen(HWND hwnd, HiddenWindow& hw)
+{
+    hw.origPlacement.length = sizeof(WINDOWPLACEMENT);
+    GetWindowPlacement(hwnd, &hw.origPlacement);
     RECT rc; GetWindowRect(hwnd, &rc);
     LONG w = rc.right - rc.left;
     LONG h = rc.bottom - rc.top;
-    // 移到虚拟桌面右下角外侧 +500px，确保完全在屏幕外
-    SetWindowPos(hwnd, nullptr, vx + vw + 500, vy + vh + 500, w, h,
-                 SWP_NOZORDER | SWP_NOACTIVATE);
+
+    int targetX, targetY;
+    CalcOffscreenTarget(targetX, targetY);
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == 0 || pid == GetCurrentProcessId()) {
+        // 本进程窗口：直接调用
+        SetWindowPos(hwnd, nullptr, targetX, targetY, w, h,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+    } else {
+        // 跨进程：通过注入在目标进程内部调用 SetWindowPos
+        // 绕过目标进程的窗口钩子对跨进程调用的拦截（极域常有全局钩子）
+        RemoteMoveParamsLayout p = { hwnd, targetX, targetY, (int)w, (int)h };
+        auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteMoveOffscreen",
+                                       &p, sizeof(p));
+        if (!r.success || r.exitCode != 0) {
+            logger::Warn(L"注入调用 RemoteMoveOffscreen 失败，降级到直接调用: " +
+                         hw.title + L" code=" + WSTR(r.exitCode) + L" err=" + r.error);
+            SetWindowPos(hwnd, nullptr, targetX, targetY, w, h,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
     hw.offscreenOk = true;
 }
 static void RestoreFromOffscreen(HWND hwnd, const HiddenWindow& hw)
@@ -227,12 +265,28 @@ static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
             if (hw.offscreenOk) {
                 RECT rc;
                 if (GetWindowRect(hw.hwnd, &rc)) {
-                    // 窗口不在屏幕外了，重新移
+                    // 窗口左上角在虚拟桌面可见范围内，说明被移回来了
                     if (rc.left < vx + vw && rc.top < vy + vh) {
                         LONG w = rc.right - rc.left;
                         LONG h = rc.bottom - rc.top;
-                        SetWindowPos(hw.hwnd, nullptr, vx + vw + 500, vy + vh + 500,
-                                     w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                        int targetX, targetY;
+                        CalcOffscreenTarget(targetX, targetY);
+
+                        DWORD pid2 = 0;
+                        GetWindowThreadProcessId(hw.hwnd, &pid2);
+                        if (pid2 == 0 || pid2 == GetCurrentProcessId()) {
+                            SetWindowPos(hw.hwnd, nullptr, targetX, targetY,
+                                         w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                        } else {
+                            RemoteMoveParamsLayout p = { hw.hwnd, targetX, targetY,
+                                                         (int)w, (int)h };
+                            auto r = inject::InjectAndCall(hw.hwnd, L"MythwareHideHook",
+                                "RemoteMoveOffscreen", &p, sizeof(p));
+                            if (!r.success || r.exitCode != 0) {
+                                SetWindowPos(hw.hwnd, nullptr, targetX, targetY,
+                                             w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+                            }
+                        }
                     }
                 }
             }

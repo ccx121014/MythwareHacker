@@ -51,6 +51,14 @@ struct RemoteLayeredAlphaParams {
     BYTE alpha;       // 0 = 全透明(不可见), 255 = 不透明
 };
 
+struct RemoteMoveParams {
+    HWND hwnd;
+    int  x;
+    int  y;
+    int  w;
+    int  h;
+};
+
 // 远程：SetWindowDisplayAffinity（WDA_EXCLUDEFROMCAPTURE）
 extern "C" __declspec(dllexport) DWORD WINAPI RemoteSetAffinity(LPVOID lpParam)
 {
@@ -124,6 +132,20 @@ extern "C" __declspec(dllexport) DWORD WINAPI RemoteSetLayeredAlpha(LPVOID lpPar
         pfn(params->hwnd, 0, params->alpha, LWA_ALPHA);
     }
     return 0;
+}
+
+// 远程：把窗口移动到指定坐标（用于移到屏幕外）
+// 在目标进程内部调用 SetWindowPos，绕过外部窗口钩子对跨进程调用的拦截
+// 返回 0=成功, 1=参数错误, 2=SetWindowPos失败, 3=窗口无效
+extern "C" __declspec(dllexport) DWORD WINAPI RemoteMoveOffscreen(LPVOID lpParam)
+{
+    RemoteMoveParams* params = (RemoteMoveParams*)lpParam;
+    if (!params) return 1;
+    if (!params->hwnd || !IsWindow(params->hwnd)) return 3;
+    BOOL ok = SetWindowPos(params->hwnd, nullptr, params->x, params->y,
+                           params->w, params->h,
+                           SWP_NOZORDER | SWP_NOACTIVATE);
+    return ok ? 0 : 2;
 }
 
 // ============== 全局状态（和JiYuTrainer一致的命名） ==============
