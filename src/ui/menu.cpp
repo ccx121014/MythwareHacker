@@ -61,7 +61,7 @@ void ShowTrayMenu(HWND hWnd)
     // 广播置顶开关（带复选框）
     bool isTopmost = pctl::IsBroadcastTopmost();
     AppendMenuW(hMenu, MF_STRING | (isTopmost ? MF_CHECKED : 0), ID_TRAY_BROADCAST_TOPMOST,
-        L"广播窗口置顶");
+        L"广播窗口置顶\tCtrl+Shift+G");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT_BLACK,      L"退出黑屏安静\tCtrl+Shift+X");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 

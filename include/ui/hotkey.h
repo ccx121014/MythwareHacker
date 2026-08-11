@@ -20,6 +20,7 @@ enum {
     ID_HOTKEY_RESTART_EXPLORER = 111, // Ctrl+Shift+R 重启资源管理器
     ID_HOTKEY_BROADCAST_FULLSCREEN = 112, // 保留：广播全屏化（兼容旧ID）
     ID_HOTKEY_BROADCAST_TOGGLE   = 113,  // Ctrl+Shift+W 广播切换（窗口化↔全屏化）
+    ID_HOTKEY_BROADCAST_TOPMOST  = 114,  // Ctrl+Shift+G 广播窗口置顶开关
 };
 
 // 注册所有全局快捷键（含低级键盘钩子，绕过极域键盘禁用）

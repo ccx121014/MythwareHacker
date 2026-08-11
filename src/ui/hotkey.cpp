@@ -33,6 +33,8 @@ static struct { UINT vk; int id; const wchar_t* name; } g_ctrlShiftKeys[] = {
     { 'K', ID_HOTKEY_KILL_MYTHWARE,    L"Ctrl+Shift+K" },
     // Ctrl+Shift+W：广播窗口化↔全屏化切换（同一个快捷键切换两种模式）
     { 'W', ID_HOTKEY_BROADCAST_TOGGLE, L"Ctrl+Shift+W" },
+    // Ctrl+Shift+G：广播窗口置顶开关
+    { 'G', ID_HOTKEY_BROADCAST_TOPMOST, L"Ctrl+Shift+G" },
     { 'X', ID_HOTKEY_EXIT_BLACK,       L"Ctrl+Shift+X" },
     { 'M', ID_HOTKEY_SUSPEND_RESUME,   L"Ctrl+Shift+M" },
     { 'C', ID_HOTKEY_KILL_CLASSROOM,   L"Ctrl+Shift+C" },
@@ -235,6 +237,8 @@ void RegisterAll(HWND hWnd)
         { ID_HOTKEY_KILL_MYTHWARE,    MOD_CONTROL | MOD_SHIFT, 'K', L"Ctrl+Shift+K" },
         // 广播窗口化↔全屏化切换：同一个快捷键
         { ID_HOTKEY_BROADCAST_TOGGLE, MOD_CONTROL | MOD_SHIFT, 'W', L"Ctrl+Shift+W" },
+        // 广播窗口置顶开关
+        { ID_HOTKEY_BROADCAST_TOPMOST, MOD_CONTROL | MOD_SHIFT, 'G', L"Ctrl+Shift+G" },
         { ID_HOTKEY_EXIT_BLACK,       MOD_CONTROL | MOD_SHIFT, 'X', L"Ctrl+Shift+X" },
         { ID_HOTKEY_SUSPEND_RESUME,   MOD_CONTROL | MOD_SHIFT, 'M', L"Ctrl+Shift+M" },
         { ID_HOTKEY_KILL_CLASSROOM,   MOD_CONTROL | MOD_SHIFT, 'C', L"Ctrl+Shift+C" },
@@ -258,6 +262,7 @@ void UnregisterAll(HWND hWnd)
     UnregisterHotKey(hWnd, ID_HOTKEY_FLOAT);
     UnregisterHotKey(hWnd, ID_HOTKEY_KILL_MYTHWARE);
     UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_TOGGLE);
+    UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_TOPMOST);
     UnregisterHotKey(hWnd, ID_HOTKEY_EXIT_BLACK);
     UnregisterHotKey(hWnd, ID_HOTKEY_SUSPEND_RESUME);
     UnregisterHotKey(hWnd, ID_HOTKEY_KILL_CLASSROOM);
@@ -293,6 +298,14 @@ bool Handle(WPARAM wParam)
     case ID_HOTKEY_BROADCAST_TOGGLE:
         // 同一个快捷键：当前全屏→窗口化，当前窗口化→全屏
         pctl::ToggleBroadcastMode();
+        return true;
+    case ID_HOTKEY_BROADCAST_TOPMOST:
+        // 切换广播窗口置顶开关
+        {
+            bool current = pctl::IsBroadcastTopmost();
+            pctl::SetBroadcastTopmost(!current);
+            logger::Info(current ? L"已关闭广播置顶" : L"已开启广播置顶");
+        }
         return true;
     case ID_HOTKEY_BROADCAST_WIN:
         // 兼容旧ID（菜单等其他地方可能仍在发）
