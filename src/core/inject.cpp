@@ -336,4 +336,185 @@ Result InjectAndCall(HWND hwnd,
     return result;
 }
 
+// ============================================================
+// 仅注入 DLL（参考 JiYuTrainer InjectDll）
+// ============================================================
+Result InjectDllOnly(DWORD pid, const std::wstring& dllName)
+{
+    Result result = {};
+    result.success = false;
+
+    if (pid == 0 || pid == GetCurrentProcessId()) {
+        result.error = L"无效的目标 PID";
+        return result;
+    }
+
+    HANDLE hProcess = OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_CREATE_THREAD |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        FALSE, pid);
+    if (!hProcess) {
+        result.error = L"OpenProcess 失败，错误码: " + WSTR(GetLastError());
+        return result;
+    }
+
+    // 检查位数匹配（不匹配时不尝试跨架构注入DLL-only模式，需要通过辅助程序）
+    bool target64 = common::IsProcess64Bit(hProcess);
+    bool self64 = common::IsSelf64Bit();
+    if (target64 != self64) {
+        result.error = L"InjectDllOnly 暂不支持跨架构注入（主程序" +
+                       std::wstring(self64 ? L"64位" : L"32位") + L" vs 目标" +
+                       std::wstring(target64 ? L"64位" : L"32位") + L"）";
+        CloseHandle(hProcess);
+        return result;
+    }
+
+    // 组装 DLL 路径（自动加 _x64/_x86 后缀）
+    std::wstring fullDllName = GetArchDllName(dllName);
+    std::wstring dllPath = GetSelfDir() + fullDllName;
+
+    size_t pathBytes = (dllPath.length() + 1) * sizeof(wchar_t);
+    LPVOID pRemoteMem = VirtualAllocEx(hProcess, nullptr, pathBytes,
+                                       MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!pRemoteMem) {
+        result.error = L"VirtualAllocEx 失败: " + WSTR(GetLastError());
+        CloseHandle(hProcess);
+        return result;
+    }
+
+    SIZE_T bytesWritten = 0;
+    if (!WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathBytes, &bytesWritten) ||
+        bytesWritten != pathBytes) {
+        result.error = L"WriteProcessMemory 失败: " + WSTR(GetLastError());
+        VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return result;
+    }
+
+    HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+    auto pfnLoadLibrary = (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryW");
+
+    HANDLE hThread = CreateRemoteThread(hProcess, nullptr, 0,
+                                        pfnLoadLibrary, pRemoteMem, 0, nullptr);
+    if (!hThread) {
+        result.error = L"CreateRemoteThread(LoadLibrary) 失败: " + WSTR(GetLastError());
+        VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return result;
+    }
+
+    WaitForSingleObject(hThread, 5000);
+    DWORD exitCode = 0;
+    GetExitCodeThread(hThread, &exitCode);
+    CloseHandle(hThread);
+    VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+    CloseHandle(hProcess);
+
+    if (exitCode == 0) {
+        result.error = L"LoadLibraryW 在远程进程返回 NULL，DLL 可能未成功加载";
+        return result;
+    }
+
+    result.success = true;
+    result.exitCode = exitCode;
+    logger::Info(L"仅注入DLL成功 " + fullDllName + L" PID=" + WSTR(pid));
+    return result;
+}
+
+// ============================================================
+// 卸载注入的 DLL（参考 JiYuTrainer UnInjectDll）
+// ============================================================
+Result UnInjectDll(DWORD pid, const std::wstring& moduleName)
+{
+    Result result = {};
+    result.success = false;
+
+    HANDLE hProcess = OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_CREATE_THREAD |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        FALSE, pid);
+    if (!hProcess) {
+        result.error = L"OpenProcess 失败: " + WSTR(GetLastError());
+        return result;
+    }
+
+    bool target64 = common::IsProcess64Bit(hProcess);
+    bool self64 = common::IsSelf64Bit();
+    if (target64 != self64) {
+        result.error = L"UnInjectDll 不支持跨架构";
+        CloseHandle(hProcess);
+        return result;
+    }
+
+    // 1) 在远程进程写模块名，调用 GetModuleHandleW
+    std::wstring fullName = GetArchDllName(moduleName);
+    DWORD nameBytes = (DWORD)((fullName.length() + 1) * sizeof(wchar_t));
+    wchar_t* pRemoteName = (wchar_t*)VirtualAllocEx(hProcess, nullptr, nameBytes,
+                                                    MEM_COMMIT, PAGE_READWRITE);
+    if (!pRemoteName) {
+        result.error = L"VirtualAllocEx(模块名) 失败: " + WSTR(GetLastError());
+        CloseHandle(hProcess);
+        return result;
+    }
+    WriteProcessMemory(hProcess, pRemoteName, fullName.c_str(), nameBytes, nullptr);
+
+    FARPROC pGetMod = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetModuleHandleW");
+    HANDLE hThread = CreateRemoteThread(hProcess, nullptr, 0,
+                (LPTHREAD_START_ROUTINE)pGetMod, pRemoteName, 0, nullptr);
+    if (!hThread) {
+        result.error = L"CreateRemoteThread(GetModuleHandleW) 失败: " + WSTR(GetLastError());
+        VirtualFreeEx(hProcess, pRemoteName, 0, MEM_DECOMMIT);
+        CloseHandle(hProcess);
+        return result;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    DWORD hRemoteMod = 0;
+    GetExitCodeThread(hThread, &hRemoteMod);
+    CloseHandle(hThread);
+    VirtualFreeEx(hProcess, pRemoteName, 0, MEM_DECOMMIT);
+
+    if (hRemoteMod == 0) {
+        result.error = L"目标进程中找不到模块 " + fullName;
+        CloseHandle(hProcess);
+        return result;
+    }
+
+    // 2) 调用 FreeLibrary
+    FARPROC pFreeLib = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "FreeLibrary");
+    hThread = CreateRemoteThread(hProcess, nullptr, 0,
+                (LPTHREAD_START_ROUTINE)pFreeLib, (LPVOID)(DWORD_PTR)hRemoteMod, 0, nullptr);
+    if (!hThread) {
+        result.error = L"CreateRemoteThread(FreeLibrary) 失败: " + WSTR(GetLastError());
+        CloseHandle(hProcess);
+        return result;
+    }
+    WaitForSingleObject(hThread, INFINITE);
+    GetExitCodeThread(hThread, &result.exitCode);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+
+    result.success = true;
+    logger::Info(L"已卸载DLL " + fullName + L" PID=" + WSTR(pid));
+    return result;
+}
+
+// ============================================================
+// 向消息中心窗口发送 WM_COPYDATA 命令
+// ============================================================
+bool SendCmdToMsgCenter(const wchar_t* windowTitle, const std::wstring& cmd)
+{
+    if (!windowTitle || !*windowTitle || cmd.empty()) return false;
+
+    HWND hWnd = FindWindowW(nullptr, windowTitle);
+    if (!hWnd) return false;
+
+    COPYDATASTRUCT cds = {};
+    cds.lpData = (PVOID)cmd.c_str();
+    cds.cbData = (DWORD)(sizeof(wchar_t) * (cmd.length() + 1));
+    DWORD_PTR res = 0;
+    LRESULT ok = SendMessageTimeoutW(hWnd, WM_COPYDATA, 0, (LPARAM)&cds,
+                                     SMTO_ABORTIFHUNG | SMTO_NORMAL, 500, &res);
+    return ok != 0;
+}
+
 } // namespace inject

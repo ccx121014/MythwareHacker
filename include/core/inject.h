@@ -27,4 +27,16 @@ Result InjectAndCall(HWND hwnd,
                      const void* params,
                      size_t paramsSize);
 
+// 仅注入 DLL 到指定 PID（不调用导出函数，DLL 会在 DllMain 中自行初始化）
+// 参考 JiYuTrainer 的 InjectDll
+Result InjectDllOnly(DWORD pid, const std::wstring& dllName);
+
+// 按 PID 卸载 DLL（通过 CreateRemoteThread 调用 FreeLibrary）
+Result UnInjectDll(DWORD pid, const std::wstring& moduleName);
+
+// 通过 WM_COPYDATA 向已注入的 DLL 消息中心窗口发送命令
+//   windowTitle  目标消息窗口标题（如 L"MythwareHacker MsgCenter Window"）
+//   cmd          命令字符串（如 L"fakeFull:true"）
+bool SendCmdToMsgCenter(const wchar_t* windowTitle, const std::wstring& cmd);
+
 } // namespace inject
