@@ -62,13 +62,16 @@ static void MoveOffscreen(HWND hwnd, HiddenWindow& hw)
 {
     hw.origPlacement.length = sizeof(WINDOWPLACEMENT);
     GetWindowPlacement(hwnd, &hw.origPlacement);
-    int screenW = GetSystemMetrics(SM_CXSCREEN);
-    int screenH = GetSystemMetrics(SM_CYSCREEN);
+    // 虚拟桌面 = 所有显示器合并区域，确保多屏也能移出去
+    int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
     RECT rc; GetWindowRect(hwnd, &rc);
     LONG w = rc.right - rc.left;
     LONG h = rc.bottom - rc.top;
-    // 用 SetWindowPos 直接移，比 SetWindowPlacement 更可靠
-    SetWindowPos(hwnd, nullptr, screenW + 100, screenH + 100, w, h,
+    // 移到虚拟桌面右下角外侧 +500px，确保完全在屏幕外
+    SetWindowPos(hwnd, nullptr, vx + vw + 500, vy + vh + 500, w, h,
                  SWP_NOZORDER | SWP_NOACTIVATE);
     hw.offscreenOk = true;
 }
@@ -194,8 +197,10 @@ static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
         Sleep(3000);
         if (!g_cloakThreadRunning) break;
 
-        int screenW = GetSystemMetrics(SM_CXSCREEN);
-        int screenH = GetSystemMetrics(SM_CYSCREEN);
+        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
 
         for (auto& hw : g_hidden) {
             if (!IsWindow(hw.hwnd)) continue;
@@ -223,10 +228,10 @@ static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
                 RECT rc;
                 if (GetWindowRect(hw.hwnd, &rc)) {
                     // 窗口不在屏幕外了，重新移
-                    if (rc.left < screenW && rc.top < screenH) {
+                    if (rc.left < vx + vw && rc.top < vy + vh) {
                         LONG w = rc.right - rc.left;
                         LONG h = rc.bottom - rc.top;
-                        SetWindowPos(hw.hwnd, nullptr, screenW + 100, screenH + 100,
+                        SetWindowPos(hw.hwnd, nullptr, vx + vw + 500, vy + vh + 500,
                                      w, h, SWP_NOZORDER | SWP_NOACTIVATE);
                     }
                 }
