@@ -23,28 +23,81 @@
 #define WDA_EXCLUDEFROMCAPTURE 0x00000011
 #endif
 
-// ============== 导出类型：远程 SetWindowDisplayAffinity ==============
+#ifndef DWMWA_CLOAK
+#define DWMWA_CLOAK 9
+#endif
+
+// ============== 导出类型 ==============
 typedef BOOL (WINAPI *SetWindowDisplayAffinity_t)(HWND, DWORD);
+typedef HRESULT (WINAPI *DwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
+typedef BOOL (WINAPI *SetLayeredWindowAttributes_t)(HWND, COLORREF, BYTE, DWORD);
 
 struct RemoteAffinityParams {
     HWND hwnd;
     DWORD affinity;
 };
 
+struct RemoteCloakParams {
+    HWND hwnd;
+    BOOL cloak;
+};
+
+struct RemoteLayeredAlphaParams {
+    HWND hwnd;
+    BYTE alpha;       // 0 = 全透明(不可见), 255 = 不透明
+};
+
+// 远程：SetWindowDisplayAffinity（WDA_EXCLUDEFROMCAPTURE）
 extern "C" __declspec(dllexport) DWORD WINAPI RemoteSetAffinity(LPVOID lpParam)
 {
     RemoteAffinityParams* params = (RemoteAffinityParams*)lpParam;
     if (!params) return 1;
-
     HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
-    if (!hUser32) {
-        hUser32 = LoadLibraryW(L"user32.dll");
-        if (!hUser32) return 4;
-    }
+    if (!hUser32) hUser32 = LoadLibraryW(L"user32.dll");
+    if (!hUser32) return 4;
     auto pfn = (SetWindowDisplayAffinity_t)GetProcAddress(hUser32, "SetWindowDisplayAffinity");
     if (!pfn) return 3;
     BOOL ok = pfn(params->hwnd, params->affinity);
     return ok ? 0 : 2;
+}
+
+// 远程：DwmSetWindowAttribute(DWMWA_CLOAK) —— 核心方案
+extern "C" __declspec(dllexport) DWORD WINAPI RemoteCloakWindow(LPVOID lpParam)
+{
+    RemoteCloakParams* params = (RemoteCloakParams*)lpParam;
+    if (!params) return 1;
+    HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
+    if (!hDwm) return 4;
+    auto pfn = (DwmSetWindowAttribute_t)GetProcAddress(hDwm, "DwmSetWindowAttribute");
+    if (!pfn) return 3;
+    HRESULT hr = pfn(params->hwnd, DWMWA_CLOAK, &params->cloak, sizeof(params->cloak));
+    FreeLibrary(hDwm);
+    return SUCCEEDED(hr) ? 0 : 2;
+}
+
+// 远程：设置窗口为分层窗口 + alpha（透明兜底方案）
+// alpha=0 完全透明（不可见），alpha=255 恢复
+extern "C" __declspec(dllexport) DWORD WINAPI RemoteSetLayeredAlpha(LPVOID lpParam)
+{
+    RemoteLayeredAlphaParams* params = (RemoteLayeredAlphaParams*)lpParam;
+    if (!params) return 1;
+    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+    if (!hUser32) hUser32 = LoadLibraryW(L"user32.dll");
+    if (!hUser32) return 4;
+    // 加上 WS_EX_LAYERED 样式
+    LONG ex = GetWindowLongW(params->hwnd, GWL_EXSTYLE);
+    if (params->alpha > 0) {
+        // 恢复：去掉 WS_EX_LAYERED（或保留但设为不透明）
+        SetWindowLongW(params->hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+    } else {
+        // 透明：加 WS_EX_LAYERED
+        SetWindowLongW(params->hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+    }
+    auto pfn = (SetLayeredWindowAttributes_t)GetProcAddress(hUser32, "SetLayeredWindowAttributes");
+    if (pfn) {
+        pfn(params->hwnd, 0, params->alpha, LWA_ALPHA);
+    }
+    return 0;
 }
 
 // ============== 全局状态（和JiYuTrainer一致的命名） ==============
@@ -378,6 +431,49 @@ static void HandleCommand(wchar_t* buf)
             else if (p2) p2();
         }
         SendBack(L"ok:unlockInput");
+    }
+    else if (wcscmp(cmd, L"cloak") == 0 && a1) {
+        // cloak:<hwnd>:<true|false> —— 隐蔽指定窗口（DWMWA_CLOAK + WDA 双保险）
+        HWND hw = (HWND)(ULONG_PTR)wcstoul(a1, nullptr, 0);
+        if (!hw || !IsWindow(hw)) {
+            SendBack(L"err:cloak:invalid_hwnd");
+            return;
+        }
+        BOOL cloak = a2 && (wcscmp(a2, L"true") == 0);
+        // 1) DWM Cloak（核心方案）
+        HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
+        if (hDwm) {
+            auto pfn = (DwmSetWindowAttribute_t)GetProcAddress(hDwm, "DwmSetWindowAttribute");
+            if (pfn) {
+                pfn(hw, DWMWA_CLOAK, &cloak, sizeof(cloak));
+            }
+            FreeLibrary(hDwm);
+        }
+        // 2) WDA 辅助（双保险）
+        HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+        if (hUser32) {
+            auto pfnWda = (SetWindowDisplayAffinity_t)GetProcAddress(hUser32, "SetWindowDisplayAffinity");
+            if (pfnWda) {
+                pfnWda(hw, cloak ? WDA_EXCLUDEFROMCAPTURE : WDA_NONE);
+            }
+        }
+        // 3) 分层窗口透明/不透明（兜底）
+        LONG ex = GetWindowLongW(hw, GWL_EXSTYLE);
+        if (cloak) {
+            SetWindowLongW(hw, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+            auto pfnAlpha = (SetLayeredWindowAttributes_t)GetProcAddress(
+                GetModuleHandleW(L"user32.dll"), "SetLayeredWindowAttributes");
+            if (pfnAlpha) pfnAlpha(hw, 0, 0, LWA_ALPHA);
+        } else {
+            // 恢复时设为不透明
+            auto pfnAlpha = (SetLayeredWindowAttributes_t)GetProcAddress(
+                GetModuleHandleW(L"user32.dll"), "SetLayeredWindowAttributes");
+            if (pfnAlpha) pfnAlpha(hw, 0, 255, LWA_ALPHA);
+            SetWindowLongW(hw, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
+        }
+        wchar_t ack[64];
+        swprintf(ack, 64, L"ok:cloak:%s", cloak ? L"true" : L"false");
+        SendBack(ack);
     }
     else if (wcscmp(cmd, L"boom") == 0) {
         // 直接让极域崩溃退出

@@ -1,4 +1,10 @@
-// window_hide.cpp - 窗口隐蔽实现
+// window_hide.cpp - 窗口隐蔽实现（DWMWA_CLOAK 优先方案）
+// ============================================================
+// 核心改进：解决"WDA_EXCLUDEFROMCAPTURE 导致截屏黑块"的问题
+//
+// 旧方案：WDA_EXCLUDEFROMCAPTURE → DWM 截屏时跳过该区域，填黑色 → 黑块
+// 新方案：DWMWA_CLOAK + WDA + WS_EX_LAYERED 三层组合 → 窗口完全消失 + 穿透
+// ============================================================
 #include "core/window_hide.h"
 #include "core/inject.h"
 #include "utils/window_utils.h"
@@ -51,7 +57,7 @@ void Cleanup()
     }
 }
 
-// 方案4：移到屏幕外
+// 方案：移到屏幕外（最终兜底）
 static void MoveOffscreen(HWND hwnd, HiddenWindow& hw)
 {
     hw.origPlacement.length = sizeof(WINDOWPLACEMENT);
@@ -82,6 +88,99 @@ static void RestoreFromOffscreen(HWND hwnd, const HiddenWindow& hw)
     UpdateWindow(hwnd);
 }
 
+// 方案：直接在当前进程对窗口做 Cloak + WDA + Layered（本进程窗口用）
+static bool ApplyCloakSameProcess(HWND hwnd, HiddenWindow& hw)
+{
+    bool any = false;
+    // DWM Cloak
+    auto pfnCloak = GetDwmSetWindowAttribute();
+    if (pfnCloak) {
+        BOOL cloak = TRUE;
+        HRESULT hr = pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        if (SUCCEEDED(hr)) {
+            hw.cloakOk = true;
+            any = true;
+        }
+    }
+    // WDA 辅助
+    auto pfnWda = GetSetWindowDisplayAffinity();
+    if (pfnWda && common::IsWdaExcludeFromCaptureSupported()) {
+        hw.wdaOk = pfnWda(hwnd, WDA_EXCLUDEFROMCAPTURE);
+        if (hw.wdaOk) any = true;
+    }
+    // Layered alpha=0 兜底
+    typedef BOOL (WINAPI *SetLayeredWindowAttributes_t)(HWND, COLORREF, BYTE, DWORD);
+    auto pfnAlpha = (SetLayeredWindowAttributes_t)GetProcAddress(
+        GetModuleHandleW(L"user32.dll"), "SetLayeredWindowAttributes");
+    LONG ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED);
+    if (pfnAlpha) {
+        hw.layeredOk = pfnAlpha(hwnd, 0, 0, LWA_ALPHA);
+        if (hw.layeredOk) any = true;
+    }
+    return any;
+}
+
+// 方案：通过 DLL 注入在目标进程内做 Cloak + WDA
+static bool ApplyCloakViaInjection(HWND hwnd, HiddenWindow& hw, std::wstring& diagErr)
+{
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == 0) { diagErr = L"无法获取窗口PID"; return false; }
+
+    // 注入 DLL（如果还没注入）
+    auto res = inject::InjectDllOnly(pid, L"MythwareHideHook");
+    if (!res.success) {
+        diagErr = L"注入失败: " + res.error;
+        return false;
+    }
+    hw.injectOk = true;
+
+    // 等待消息窗口就绪
+    HWND msgWnd = nullptr;
+    for (int i = 0; i < 20; i++) {
+        msgWnd = FindWindowW(nullptr, L"MythwareHacker MsgCenter Window");
+        if (msgWnd) break;
+        Sleep(100);
+    }
+    if (!msgWnd) {
+        diagErr = L"DLL消息窗口未就绪";
+        return false;
+    }
+
+    // 发送 cloak 命令: cloak:<hwnd>:true
+    wchar_t cmd[64];
+    swprintf(cmd, 64, L"cloak:%llu:true", (unsigned long long)(ULONG_PTR)hwnd);
+    bool ok = inject::SendCmdToMsgCenter(L"MythwareHacker MsgCenter Window", cmd);
+    if (!ok) {
+        diagErr = L"发送 cloak 命令失败";
+        return false;
+    }
+
+    // 同时尝试直接用远程调用再保险一次
+    struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
+    RemoteCloakParams p1 = { hwnd, TRUE };
+    auto r2 = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteCloakWindow",
+                                     &p1, sizeof(p1));
+    if (r2.success && r2.exitCode == 0) hw.cloakOk = true;
+
+    // 远程 WDA
+    struct RemoteAffinityParams { HWND hwnd; DWORD affinity; };
+    RemoteAffinityParams p2 = { hwnd, WDA_EXCLUDEFROMCAPTURE };
+    auto r3 = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
+                                     &p2, sizeof(p2));
+    if (r3.success && r3.exitCode == 0) hw.wdaOk = true;
+
+    // 远程 Layered alpha=0
+    struct RemoteLayeredAlphaParams { HWND hwnd; BYTE alpha; };
+    RemoteLayeredAlphaParams p3 = { hwnd, 0 };
+    auto r4 = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetLayeredAlpha",
+                                     &p3, sizeof(p3));
+    if (r4.success && r4.exitCode == 0) hw.layeredOk = true;
+
+    return hw.cloakOk || hw.wdaOk || hw.layeredOk;
+}
+
 bool Hide(HWND hwnd, std::wstring& diagErr)
 {
     diagErr.clear();
@@ -90,7 +189,6 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
         diagErr = L"窗口不可用";
         return false;
     }
-
     if (IsHidden(hwnd)) {
         diagErr = L"窗口已隐蔽";
         return false;
@@ -100,65 +198,49 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
     hw.hwnd = hwnd;
     hw.title = wutil::GetWindowTitle(hwnd);
     hw.processName = wutil::GetProcessName(hwnd);
-
-    // 预先保存当前窗口位置（用于持久化恢复）
     hw.origPlacement.length = sizeof(WINDOWPLACEMENT);
     GetWindowPlacement(hwnd, &hw.origPlacement);
 
     bool anySuccess = false;
 
-    // 方案1：本进程调用 WDA（对其他进程窗口通常无效，但尝试）
-    auto pfnWda = GetSetWindowDisplayAffinity();
-    if (pfnWda && common::IsWdaExcludeFromCaptureSupported()) {
-        hw.wdaOk = pfnWda(hwnd, WDA_EXCLUDEFROMCAPTURE);
-        if (hw.wdaOk) anySuccess = true;
-    }
-
-    // 方案2：DLL 注入跨进程调用 WDA
-    if (!hw.wdaOk) {
-        struct RemoteParams { HWND hwnd; DWORD affinity; };
-        RemoteParams params = { hwnd, WDA_EXCLUDEFROMCAPTURE };
-        auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
-                                       &params, sizeof(params));
-        if (r.success && r.exitCode == 0) {
-            hw.injectOk = true;
+    // 方案1（核心）：DWM Cloak + WDA + Layered 通过 DLL 注入跨进程
+    {
+        std::wstring err;
+        if (ApplyCloakViaInjection(hwnd, hw, err)) {
             anySuccess = true;
-        } else if (!r.success) {
-            diagErr = r.error;
         } else {
-            diagErr = L"远程调用失败，退出码: " + WSTR(r.exitCode);
+            diagErr = err;
         }
     }
 
-    // 方案3：DWM Cloak（Win8+，本进程）
+    // 方案2（本进程窗口的降级）：直接调 Cloak + WDA
     if (!anySuccess) {
-        auto pfnCloak = GetDwmSetWindowAttribute();
-        if (pfnCloak) {
-            BOOL cloak = TRUE;
-            HRESULT hr = pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
-            hw.cloakOk = SUCCEEDED(hr);
-            if (hw.cloakOk) anySuccess = true;
-            if (anySuccess) diagErr.clear();
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid == GetCurrentProcessId()) {
+            if (ApplyCloakSameProcess(hwnd, hw)) anySuccess = true;
         }
     }
 
-    // 方案4：屏幕外移动（兜底）
+    // 方案3（最终兜底）：移到屏幕外
     if (!anySuccess) {
         MoveOffscreen(hwnd, hw);
         anySuccess = true;
-        logger::Warn(L"WDA/注入/Cloak 均失败，使用屏幕外方案: " + hw.title + L" 诊断: " + diagErr);
+        logger::Warn(L"Cloak/WDA均失败，使用屏幕外方案: " + hw.title + L" 诊断: " + diagErr);
         diagErr.clear();
     }
 
     g_hidden.push_back(hw);
     SaveToPersist();
 
-    logger::Info(L"隐蔽窗口: " + hw.title + L" [" + hw.processName + L"]" +
-              L" 方案: " + std::wstring(hw.wdaOk ? L"WDA " : L"") +
-              std::wstring(hw.injectOk ? L"注入 " : L"") +
-              std::wstring(hw.cloakOk ? L"Cloak " : L"") +
-              std::wstring(hw.offscreenOk ? L"屏幕外" : L""));
+    std::wstring methods;
+    if (hw.cloakOk)     methods += L"Cloak ";
+    if (hw.wdaOk)       methods += L"WDA ";
+    if (hw.layeredOk)   methods += L"Layered ";
+    if (hw.injectOk)    methods += L"[注入] ";
+    if (hw.offscreenOk) methods += L"屏幕外";
 
+    logger::Info(L"隐蔽窗口: " + hw.title + L" [" + hw.processName + L"] 方案: " + methods);
     return anySuccess;
 }
 
@@ -174,33 +256,46 @@ bool Restore(HWND hwnd)
 
     if (!IsWindow(hwnd)) return false;
 
-    // 反向执行所有生效的方案
-    DWORD hwndPid = 0;
-    GetWindowThreadProcessId(hwnd, &hwndPid);
-
-    // WDA 恢复（仅本进程窗口且 wdaOk 时）
-    auto pfnWda = GetSetWindowDisplayAffinity();
-    if (pfnWda && hw.wdaOk && hwndPid == GetCurrentProcessId()) {
-        pfnWda(hwnd, WDA_NONE);
-    }
-
-    // 注入恢复（affinity=0）—— 仅当之前是注入方式隐蔽时才尝试
+    // 反向：通过 DLL 注入恢复
     if (hw.injectOk) {
-        struct RemoteParams { HWND hwnd; DWORD affinity; };
-        RemoteParams params = { hwnd, WDA_NONE };
-        auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
-                              &params, sizeof(params));
-        if (!r.success) {
-            logger::Warn(L"恢复WDA注入失败: " + r.error);
-        }
+        // 发 cloak:hwnd:false 恢复
+        wchar_t cmd[64];
+        swprintf(cmd, 64, L"cloak:%llu:false", (unsigned long long)(ULONG_PTR)hwnd);
+        inject::SendCmdToMsgCenter(L"MythwareHacker MsgCenter Window", cmd);
+
+        // 远程 WDA_NONE
+        struct RemoteAffinityParams { HWND hwnd; DWORD affinity; };
+        RemoteAffinityParams p = { hwnd, WDA_NONE };
+        inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetAffinity",
+                              &p, sizeof(p));
+
+        // 远程 alpha=255 恢复
+        struct RemoteLayeredAlphaParams { HWND hwnd; BYTE alpha; };
+        RemoteLayeredAlphaParams p2 = { hwnd, 255 };
+        inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteSetLayeredAlpha",
+                              &p2, sizeof(p2));
     }
 
-    // DWM Cloak 恢复（仅 cloakOk 时）
-    if (hw.cloakOk) {
+    // 本进程恢复
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == GetCurrentProcessId()) {
         auto pfnCloak = GetDwmSetWindowAttribute();
-        if (pfnCloak) {
+        if (pfnCloak && hw.cloakOk) {
             BOOL cloak = FALSE;
             pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        }
+        auto pfnWda = GetSetWindowDisplayAffinity();
+        if (pfnWda && hw.wdaOk) {
+            pfnWda(hwnd, WDA_NONE);
+        }
+        if (hw.layeredOk) {
+            typedef BOOL (WINAPI *SetLayeredWindowAttributes_t)(HWND, COLORREF, BYTE, DWORD);
+            auto pfnAlpha = (SetLayeredWindowAttributes_t)GetProcAddress(
+                GetModuleHandleW(L"user32.dll"), "SetLayeredWindowAttributes");
+            if (pfnAlpha) pfnAlpha(hwnd, 0, 255, LWA_ALPHA);
+            LONG ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_LAYERED);
         }
     }
 
@@ -214,9 +309,7 @@ void RestoreAll()
 {
     auto copy = g_hidden;
     for (const auto& hw : copy) {
-        if (IsWindow(hw.hwnd)) {
-            Restore(hw.hwnd);
-        }
+        if (IsWindow(hw.hwnd)) Restore(hw.hwnd);
     }
     g_hidden.clear();
     persist::Delete();
@@ -226,7 +319,6 @@ void ToggleCurrent()
 {
     HWND hwnd = GetForegroundWindow();
     if (!hwnd || !IsWindowVisible(hwnd)) {
-        // 前台无效，找第一个可用窗口
         hwnd = GetWindow(GetDesktopWindow(), GW_CHILD);
         while (hwnd) {
             if (IsWindowVisible(hwnd) && wutil::IsWindowEligible(hwnd))
