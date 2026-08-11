@@ -27,6 +27,10 @@
 #define DWMWA_CLOAK 9
 #endif
 
+#ifndef DWMWA_CLOAKED
+#define DWMWA_CLOAKED 14
+#endif
+
 // ============== 导出类型 ==============
 typedef BOOL (WINAPI *SetWindowDisplayAffinity_t)(HWND, DWORD);
 typedef HRESULT (WINAPI *DwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
@@ -68,11 +72,33 @@ extern "C" __declspec(dllexport) DWORD WINAPI RemoteCloakWindow(LPVOID lpParam)
     if (!params) return 1;
     HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
     if (!hDwm) return 4;
-    auto pfn = (DwmSetWindowAttribute_t)GetProcAddress(hDwm, "DwmSetWindowAttribute");
-    if (!pfn) return 3;
-    HRESULT hr = pfn(params->hwnd, DWMWA_CLOAK, &params->cloak, sizeof(params->cloak));
+    auto pfnSet = (DwmSetWindowAttribute_t)GetProcAddress(hDwm, "DwmSetWindowAttribute");
+    if (!pfnSet) { FreeLibrary(hDwm); return 3; }
+    HRESULT hr = pfnSet(params->hwnd, DWMWA_CLOAK, &params->cloak, sizeof(params->cloak));
     FreeLibrary(hDwm);
     return SUCCEEDED(hr) ? 0 : 2;
+}
+
+// 远程：验证窗口是否已被 Cloak（DWMWA_CLOAKED）
+// 返回 0=已cloak, 1=未cloak, 2+=错误
+extern "C" __declspec(dllexport) DWORD WINAPI RemoteIsCloaked(LPVOID lpParam)
+{
+    // lpParam 指向 HWND（由 InjectAndCall 传入的参数缓冲区）
+    HWND hwnd = nullptr;
+    if (lpParam) {
+        memcpy(&hwnd, lpParam, sizeof(HWND));
+    }
+    if (!hwnd || !IsWindow(hwnd)) return 3;
+    HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
+    if (!hDwm) return 4;
+    typedef HRESULT (WINAPI *DwmGetWindowAttribute_t)(HWND, DWORD, PVOID, DWORD);
+    auto pfnGet = (DwmGetWindowAttribute_t)GetProcAddress(hDwm, "DwmGetWindowAttribute");
+    if (!pfnGet) { FreeLibrary(hDwm); return 5; }
+    BOOL cloaked = FALSE;
+    HRESULT hr = pfnGet(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+    FreeLibrary(hDwm);
+    if (FAILED(hr)) return 6;
+    return cloaked ? 0 : 1;
 }
 
 // 远程：设置窗口为分层窗口 + alpha（透明兜底方案）

@@ -86,7 +86,7 @@ static void RestoreFromOffscreen(HWND hwnd, const HiddenWindow& hw)
 }
 
 // ============ 方案1：DWMWA_CLOAK（穿透）============
-// 只做 Cloak，不混 WDA/Layered
+// 设置 Cloak 后验证是否真的生效，DWM 可能返回 S_OK 但不实际 cloak
 static bool TryCloak(HWND hwnd, HiddenWindow& hw)
 {
     DWORD pid = 0;
@@ -95,46 +95,148 @@ static bool TryCloak(HWND hwnd, HiddenWindow& hw)
 
     bool isSelf = (pid == GetCurrentProcessId());
 
+    // 验证函数：设置后等待 150ms 再检查 DWMWA_CLOAKED
+    auto verifyCloak = [](HWND h, bool self) -> bool {
+        Sleep(150);
+        if (self) {
+            HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
+            if (!hDwm) return false;
+            typedef HRESULT (WINAPI *DwmGetWindowAttribute_t)(HWND, DWORD, PVOID, DWORD);
+            auto pfnGet = (DwmGetWindowAttribute_t)GetProcAddress(hDwm, "DwmGetWindowAttribute");
+            if (!pfnGet) { FreeLibrary(hDwm); return false; }
+            BOOL cloaked = FALSE;
+            HRESULT hr = pfnGet(h, 14 /*DWMWA_CLOAKED*/, &cloaked, sizeof(cloaked));
+            FreeLibrary(hDwm);
+            return SUCCEEDED(hr) && cloaked;
+        }
+        // 跨进程验证：调用 RemoteIsCloaked
+        // RemoteIsCloaked 接受 HWND 作为参数（不是结构体）
+        auto r = inject::InjectAndCall(h, L"MythwareHideHook", "RemoteIsCloaked",
+                                       nullptr, 0);
+        // 注意：InjectAndCall 的参数是 RemoteIsCloaked(LPVOID)，我们把 hwnd 作为参数传
+        // 但 InjectAndCall 需要参数数据... 改用直接传 HWND 值
+        return r.success && r.exitCode == 0;
+    };
+
     if (isSelf) {
-        // 本进程窗口：直接调
         auto pfnCloak = GetDwmSetWindowAttribute();
         if (!pfnCloak) return false;
         BOOL cloak = TRUE;
         HRESULT hr = pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
         if (SUCCEEDED(hr)) {
-            hw.cloakOk = true;
-            return true;
+            // 验证
+            if (verifyCloak(hwnd, true)) {
+                hw.cloakOk = true;
+                return true;
+            }
+            // 没验证成功，重试一次
+            pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+            if (verifyCloak(hwnd, true)) {
+                hw.cloakOk = true;
+                return true;
+            }
         }
         return false;
     }
 
-    // 跨进程：通过 DLL 注入调用 RemoteCloakWindow
+    // 跨进程
     struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
     RemoteCloakParams p = { hwnd, TRUE };
+
+    // 验证函数：调用 RemoteIsCloaked，传入 HWND
+    auto verifyRemote = [](HWND h) -> bool {
+        Sleep(150);
+        auto rv = inject::InjectAndCall(h, L"MythwareHideHook", "RemoteIsCloaked",
+                                        &h, sizeof(h));
+        return rv.success && rv.exitCode == 0;
+    };
+
+    // 第一次尝试
     auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteCloakWindow",
                                    &p, sizeof(p));
     if (r.success && r.exitCode == 0) {
-        hw.cloakOk = true;
         hw.injectOk = true;
-        return true;
+        if (verifyRemote(hwnd)) {
+            hw.cloakOk = true;
+            return true;
+        }
     }
-    // InjectAndCall 失败可能是因为 DLL 没注入，尝试先 InjectDllOnly 再发 cloak 命令
-    auto res = inject::InjectDllOnly(pid, L"MythwareHideHook");
-    if (!res.success) return false;
-    hw.injectOk = true;
-    // 等待消息窗口
-    for (int i = 0; i < 20; i++) {
-        if (FindWindowW(nullptr, L"MythwareHacker MsgCenter Window")) break;
-        Sleep(100);
+
+    // InjectAndCall 失败，先 InjectDllOnly
+    if (!hw.injectOk) {
+        auto res = inject::InjectDllOnly(pid, L"MythwareHideHook");
+        if (!res.success) return false;
+        hw.injectOk = true;
+        for (int i = 0; i < 20; i++) {
+            if (FindWindowW(nullptr, L"MythwareHacker MsgCenter Window")) break;
+            Sleep(100);
+        }
     }
-    // 再试一次远程调用
+
+    // 重试 cloak
     auto r2 = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteCloakWindow",
                                     &p, sizeof(p));
     if (r2.success && r2.exitCode == 0) {
-        hw.cloakOk = true;
-        return true;
+        if (verifyRemote(hwnd)) {
+            hw.cloakOk = true;
+            return true;
+        }
     }
     return false;
+}
+
+// ============ Cloak 维持线程 ============
+// DWM 可能在数秒后恢复 cloak 状态，需要定期重新设置
+static HANDLE g_hCloakThread = nullptr;
+static volatile bool g_cloakThreadRunning = false;
+
+static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
+{
+    logger::Info(L"Cloak维持线程已启动（间隔 3000ms）");
+    while (g_cloakThreadRunning) {
+        Sleep(3000);
+        if (!g_cloakThreadRunning) break;
+
+        // 遍历所有用 cloak 方案隐蔽的窗口，重新设置
+        for (auto& hw : g_hidden) {
+            if (!hw.cloakOk) continue;
+            if (!IsWindow(hw.hwnd)) continue;
+
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hw.hwnd, &pid);
+            if (pid == GetCurrentProcessId()) {
+                auto pfnCloak = GetDwmSetWindowAttribute();
+                if (pfnCloak) {
+                    BOOL cloak = TRUE;
+                    pfnCloak(hw.hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+                }
+            } else {
+                struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
+                RemoteCloakParams p = { hw.hwnd, TRUE };
+                inject::InjectAndCall(hw.hwnd, L"MythwareHideHook", "RemoteCloakWindow",
+                                      &p, sizeof(p));
+            }
+        }
+    }
+    logger::Info(L"Cloak维持线程已停止");
+    return 0;
+}
+
+static void StartCloakMaintainThread()
+{
+    if (g_hCloakThread) return;
+    g_cloakThreadRunning = true;
+    g_hCloakThread = CreateThread(nullptr, 0, CloakMaintainThreadProc, nullptr, 0, nullptr);
+}
+
+static void StopCloakMaintainThread()
+{
+    g_cloakThreadRunning = false;
+    if (g_hCloakThread) {
+        WaitForSingleObject(g_hCloakThread, 3000);
+        CloseHandle(g_hCloakThread);
+        g_hCloakThread = nullptr;
+    }
 }
 
 // ============ 方案2：WDA_EXCLUDEFROMCAPTURE（黑块）============
@@ -200,6 +302,7 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
     if (TryCloak(hwnd, hw)) {
         ok = true;
         method = L"穿透(Cloak)";
+        StartCloakMaintainThread();  // 启动维持线程防止 DWM 恢复
     }
 
     // === 方案2：黑块（WDA_EXCLUDEFROMCAPTURE）===
@@ -287,6 +390,7 @@ void RestoreAll()
     }
     g_hidden.clear();
     persist::Delete();
+    StopCloakMaintainThread();
 }
 
 void ToggleCurrent()
