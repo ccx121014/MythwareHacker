@@ -57,8 +57,7 @@ void ShowTrayMenu(HWND hWnd)
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_KILL_MYTHWARE,   L"强杀极域进程\tCtrl+Shift+K");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_SUSPEND_MYTHWARE,L"挂起（冻结）极域\tCtrl+Shift+M");
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_RESUME_MYTHWARE, L"恢复极域\tCtrl+Shift+M");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_WIN,   L"广播窗口化\tCtrl+Shift+W");
-    AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_FULL,  L"广播全屏化");
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_BROADCAST_WIN,   L"切换广播全屏/窗口化\tCtrl+Shift+W");
     // 广播置顶开关（带复选框）
     bool isTopmost = pctl::IsBroadcastTopmost();
     AppendMenuW(hMenu, MF_STRING | (isTopmost ? MF_CHECKED : 0), ID_TRAY_BROADCAST_TOPMOST,

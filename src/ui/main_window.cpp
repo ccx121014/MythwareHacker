@@ -163,7 +163,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             sbStartX + 0 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_PREVIEW, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"悬浮窗", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             sbStartX + 1 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_FLOAT, app::g_ctx.hInst, nullptr);
-        CreateWindowW(L"BUTTON", L"广播窗口化", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        CreateWindowW(L"BUTTON", L"切换广播模式", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             sbStartX + 2 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_BROADCAST_WIN, app::g_ctx.hInst, nullptr);
         CreateWindowW(L"BUTTON", L"退出黑屏", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             sbStartX + 3 * (sbW + sbGap), y + 44, sbW, 22, hWnd, (HMENU)(INT_PTR)IDC_BTN_EXIT_BLACK, app::g_ctx.hInst, nullptr);
@@ -321,8 +321,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
             pctl::StartMythware();
             AppendLog(L"已尝试启动极域");
         } else if (cmd == IDC_BTN_BROADCAST_WIN) {
-            bool ok = pctl::BroadcastToWindowed();
-            AppendLog(ok ? L"已将广播窗口化" : L"未找到广播窗口");
+            bool ok = pctl::ToggleBroadcastMode();
+            AppendLog(ok ? (pctl::IsBroadcastFullscreen() ? L"广播已切换为全屏"
+                                                           : L"广播已切换为窗口化")
+                         : L"未找到广播窗口");
         } else if (cmd == IDC_BTN_EXIT_BLACK) {
             bool ok = pctl::ExitBlackScreen();
             AppendLog(ok ? L"已退出黑屏" : L"未找到黑屏窗口");

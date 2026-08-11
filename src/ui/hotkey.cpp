@@ -31,8 +31,8 @@ static struct { UINT vk; int id; const wchar_t* name; } g_ctrlShiftKeys[] = {
     { 'P', ID_HOTKEY_PREVIEW,          L"Ctrl+Shift+P" },
     { 'F', ID_HOTKEY_FLOAT,            L"Ctrl+Shift+F" },
     { 'K', ID_HOTKEY_KILL_MYTHWARE,    L"Ctrl+Shift+K" },
-    { 'W', ID_HOTKEY_BROADCAST_WIN,    L"Ctrl+Shift+W" },
-    { 'G', ID_HOTKEY_BROADCAST_FULLSCREEN, L"Ctrl+Shift+G" },
+    // Ctrl+Shift+W：广播窗口化↔全屏化切换（同一个快捷键切换两种模式）
+    { 'W', ID_HOTKEY_BROADCAST_TOGGLE, L"Ctrl+Shift+W" },
     { 'X', ID_HOTKEY_EXIT_BLACK,       L"Ctrl+Shift+X" },
     { 'M', ID_HOTKEY_SUSPEND_RESUME,   L"Ctrl+Shift+M" },
     { 'C', ID_HOTKEY_KILL_CLASSROOM,   L"Ctrl+Shift+C" },
@@ -233,8 +233,8 @@ void RegisterAll(HWND hWnd)
         { ID_HOTKEY_PREVIEW,          MOD_CONTROL | MOD_SHIFT, 'P', L"Ctrl+Shift+P" },
         { ID_HOTKEY_FLOAT,            MOD_CONTROL | MOD_SHIFT, 'F', L"Ctrl+Shift+F" },
         { ID_HOTKEY_KILL_MYTHWARE,    MOD_CONTROL | MOD_SHIFT, 'K', L"Ctrl+Shift+K" },
-        { ID_HOTKEY_BROADCAST_WIN,    MOD_CONTROL | MOD_SHIFT, 'W', L"Ctrl+Shift+W" },
-        { ID_HOTKEY_BROADCAST_FULLSCREEN, MOD_CONTROL | MOD_SHIFT, 'G', L"Ctrl+Shift+G" },
+        // 广播窗口化↔全屏化切换：同一个快捷键
+        { ID_HOTKEY_BROADCAST_TOGGLE, MOD_CONTROL | MOD_SHIFT, 'W', L"Ctrl+Shift+W" },
         { ID_HOTKEY_EXIT_BLACK,       MOD_CONTROL | MOD_SHIFT, 'X', L"Ctrl+Shift+X" },
         { ID_HOTKEY_SUSPEND_RESUME,   MOD_CONTROL | MOD_SHIFT, 'M', L"Ctrl+Shift+M" },
         { ID_HOTKEY_KILL_CLASSROOM,   MOD_CONTROL | MOD_SHIFT, 'C', L"Ctrl+Shift+C" },
@@ -257,8 +257,7 @@ void UnregisterAll(HWND hWnd)
     UnregisterHotKey(hWnd, ID_HOTKEY_PREVIEW);
     UnregisterHotKey(hWnd, ID_HOTKEY_FLOAT);
     UnregisterHotKey(hWnd, ID_HOTKEY_KILL_MYTHWARE);
-    UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_WIN);
-    UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_FULLSCREEN);
+    UnregisterHotKey(hWnd, ID_HOTKEY_BROADCAST_TOGGLE);
     UnregisterHotKey(hWnd, ID_HOTKEY_EXIT_BLACK);
     UnregisterHotKey(hWnd, ID_HOTKEY_SUSPEND_RESUME);
     UnregisterHotKey(hWnd, ID_HOTKEY_KILL_CLASSROOM);
@@ -291,7 +290,12 @@ bool Handle(WPARAM wParam)
         pctl::KillMythware();
         logger::Info(L"已强杀极域进程");
         return true;
+    case ID_HOTKEY_BROADCAST_TOGGLE:
+        // 同一个快捷键：当前全屏→窗口化，当前窗口化→全屏
+        pctl::ToggleBroadcastMode();
+        return true;
     case ID_HOTKEY_BROADCAST_WIN:
+        // 兼容旧ID（菜单等其他地方可能仍在发）
         pctl::BroadcastToWindowed();
         logger::Info(L"已将广播窗口化");
         return true;

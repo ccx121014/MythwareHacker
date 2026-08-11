@@ -491,6 +491,40 @@ bool IsBroadcastTopmost()
     return g_userWantTopmost;
 }
 
+// ==================== 检测/切换 全屏↔窗口化 ====================
+
+bool IsBroadcastFullscreen()
+{
+    HWND hwnd = FindBroadcastWindow();
+    if (!hwnd) return false;
+    RECT rc;
+    if (!GetWindowRect(hwnd, &rc)) return false;
+    int sw = GetSystemMetrics(SM_CXSCREEN);
+    int sh = GetSystemMetrics(SM_CYSCREEN);
+    LONG style = GetWindowLongW(hwnd, GWL_STYLE);
+    // 无边框(无WS_BORDER/WS_OVERLAPPEDWINDOW / 有WS_POPUP) 且尺寸接近全屏 → 视为全屏
+    bool noBorder = !(style & WS_BORDER) && !(style & WS_OVERLAPPEDWINDOW);
+    bool sizeOk = (rc.left <= 0 && rc.top <= 0 && rc.right >= sw - 2 && rc.bottom >= sh - 2);
+    return noBorder && sizeOk;
+}
+
+bool ToggleBroadcastMode()
+{
+    HWND hwnd = FindBroadcastWindow();
+    if (!hwnd) {
+        // 无窗口 → 记录意图为窗口化；等窗口出现后监控线程会应用
+        logger::Warn(L"未找到广播窗口，切换默认执行→窗口化");
+        return BroadcastToWindowed();
+    }
+    if (IsBroadcastFullscreen()) {
+        logger::Info(L"切换广播：全屏 → 窗口化");
+        return BroadcastToWindowed();
+    } else {
+        logger::Info(L"切换广播：窗口化 → 全屏");
+        return BroadcastToFullscreen();
+    }
+}
+
 // ============================================================
 // Legacy Fallback 实现（DLL不可用时仍能工作）
 // ============================================================

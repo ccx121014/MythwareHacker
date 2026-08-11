@@ -49,6 +49,12 @@ bool BroadcastToWindowed();
 // 广播全屏化（恢复全屏）
 bool BroadcastToFullscreen();
 
+// 广播窗口化/全屏化切换（当前全屏→窗口化；当前窗口化→全屏；无窗口→窗口化）
+bool ToggleBroadcastMode();
+
+// 检测当前广播窗口是否处于全屏样式（无边框WS_POPUP且尺寸接近全屏）
+bool IsBroadcastFullscreen();
+
 // 广播窗口置顶开关
 // enable=true 设为置顶，enable=false 取消置顶
 bool SetBroadcastTopmost(bool enable);

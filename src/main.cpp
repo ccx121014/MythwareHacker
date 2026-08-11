@@ -326,12 +326,12 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM l
         } else if (cmd == ID_TRAY_RESUME_MYTHWARE) {
             pctl::ResumeMythware();
         } else if (cmd == ID_TRAY_BROADCAST_WIN) {
-            pctl::BroadcastToWindowed();
+            pctl::ToggleBroadcastMode();
         } else if (cmd == ID_TRAY_BROADCAST_TOPMOST) {
             bool current = pctl::IsBroadcastTopmost();
             pctl::SetBroadcastTopmost(!current);
         } else if (cmd == ID_TRAY_BROADCAST_FULL) {
-            pctl::BroadcastToFullscreen();
+            pctl::ToggleBroadcastMode();
         } else if (cmd == ID_TRAY_EXIT_BLACK) {
             pctl::ExitBlackScreen();
         }
