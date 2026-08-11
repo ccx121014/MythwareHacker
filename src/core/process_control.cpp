@@ -361,18 +361,22 @@ static DWORD WINAPI MonitorThreadProc(LPVOID)
             // ========== (2) 枚举窗口 + 发送给 DLL 子类化 ==========
             // 只要消息窗口存在，就发送窗口句柄（频率：每次循环都发）
             if (FindWindowW(nullptr, MSG_WINDOW_TITLE)) {
-                // 初始化主窗口句柄（第一次）
-                if (!injectedOnce) {
-                    // 主窗口句柄未知时传NULL，DLL只会执行控制命令不回消息
-                    EnumAndSendBroadcastHwnds(pid);
-                    // 同步用户意图到DLL（因为DLL是刚注入或刚重启的极域）
-                    if (g_userWantTopmost)    SendToDll(L"manualTop:true");
-                    else                      SendToDll(L"manualTop:false");
-                    if (g_userWantFullscreen) SendToDll(L"manualFull:true");
-                    else                      SendToDll(L"fakeFull:false");
-                    injectedOnce = true;
+                EnumAndSendBroadcastHwnds(pid);
+
+                // ========== (3) 持续强制同步用户意图 ==========
+                // 广播窗口每次出现极域都会尝试置顶+全屏，必须持续覆盖。
+                // 尤其：用户没开置顶时，必须每次都发 manualTop:false，
+                // 否则极域的定时器会把广播窗口重新设为 TOPMOST，覆盖掉我们的悬浮窗/主窗口。
+                if (g_userWantTopmost) {
+                    SendToDll(L"manualTop:true");
                 } else {
-                    EnumAndSendBroadcastHwnds(pid);
+                    SendToDll(L"manualTop:false");
+                }
+                if (g_userWantFullscreen) {
+                    SendToDll(L"manualFull:true");
+                } else {
+                    SendToDll(L"fakeFull:false");
+                    SendToDll(L"manualFull:false");
                 }
             }
         }
