@@ -360,7 +360,8 @@ static DWORD WINAPI ClassroomMonitorThreadProc(LPVOID)
                 logger::Info(L"监控线程杀掉 " + WSTR(killed) + L" 个机房助手进程");
             }
         }
-        Sleep(5000);
+        // 每 100ms 检查退出标志，关闭时立即返回（避免关闭卡顿）
+        for (int i = 0; i < 50 && g_classroomMonitorRunning; i++) Sleep(100);
     }
     logger::Info(L"机房助手监控线程已停止");
     return 0;

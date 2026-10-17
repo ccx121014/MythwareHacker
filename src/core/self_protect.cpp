@@ -106,8 +106,15 @@ static DWORD WINAPI MonitorThreadProc(LPVOID lpParameter)
     while (g_monitorRunning) {
         HANDLE hProcess = OpenProcess(SYNCHRONIZE, FALSE, parentPid);
         if (hProcess) {
-            DWORD result = WaitForSingleObject(hProcess, 5000);
-            if (result == WAIT_OBJECT_0) {
+            // 分段等待父进程退出（每 500ms 检查一次运行标志，关闭时能立即返回）
+            bool parentDead = false;
+            for (int i = 0; i < 10 && g_monitorRunning; i++) {
+                if (WaitForSingleObject(hProcess, 500) == WAIT_OBJECT_0) {
+                    parentDead = true;
+                    break;
+                }
+            }
+            if (parentDead) {
                 logger::Info(L"检测到父进程终止，准备重启...");
                 wchar_t exePath[MAX_PATH] = {};
                 if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
@@ -126,7 +133,7 @@ static DWORD WINAPI MonitorThreadProc(LPVOID lpParameter)
             }
             CloseHandle(hProcess);
         }
-        Sleep(2000);
+        for (int i = 0; i < 20 && g_monitorRunning; i++) Sleep(100);
     }
     return 0;
 }

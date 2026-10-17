@@ -214,8 +214,8 @@ static DWORD WINAPI MonitorThreadProc(LPVOID)
             wasBlackScreen = isBlack;
         }
 
-        // 5 秒间隔，减少进程快照开销
-        Sleep(5000);
+        // 5 秒间隔，减少进程快照开销（每 100ms 检查退出标志，关闭时立即返回）
+        for (int i = 0; i < 50 && g_monitorRunning; i++) Sleep(100);
     }
     return 0;
 }

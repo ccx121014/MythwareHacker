@@ -308,11 +308,21 @@ static void EnsureMonitorThread()
     g_monitorRunning = true;
     g_hMonitorThread = CreateThread(nullptr, 0, MonitorThreadProc, nullptr, 0, nullptr);
 }
+// 可被打断的睡眠：每 100ms 检查一次运行标志，退出时能立即返回，避免关闭卡顿
+static bool SleepInterruptible(DWORD ms)
+{
+    for (DWORD t = 0; t < ms && g_monitorRunning; t += 100)
+        Sleep(100);
+    return g_monitorRunning;
+}
+
 static void StopMonitorThread()
 {
     g_monitorRunning = false;
     if (g_hMonitorThread) {
-        WaitForSingleObject(g_hMonitorThread, 5000);
+        // 线程以 100ms 粒度检查标志，通常 <200ms 内退出；给足余量即可，
+        // 超时不再等待（无需 TerminateThread，进程即将退出），保证关闭不卡。
+        WaitForSingleObject(g_hMonitorThread, 1500);
         CloseHandle(g_hMonitorThread);
         g_hMonitorThread = nullptr;
     }
@@ -343,16 +353,15 @@ static DWORD WINAPI MonitorThreadProc(LPVOID)
                         g_lastInjectedPid = pid;
                         injectedOnce = true;
                         logger::Info(L"自动注入DLL成功，PID=" + WSTR(pid));
-                        // 等待DLL创建消息窗口（最多等待1秒）
-                        for (int i = 0; i < 10; i++) {
+                        // 等待DLL创建消息窗口（最多等待1秒，且可被退出打断）
+                        for (int i = 0; i < 10 && g_monitorRunning; i++) {
                             if (FindWindowW(nullptr, MSG_WINDOW_TITLE)) break;
                             Sleep(100);
                         }
                     } else {
                         logger::Warn(L"自动注入DLL失败：" + res.error);
-                        // 3秒后再试
-                        Sleep(3000);
-                        if (!g_monitorRunning) break;
+                        // 3秒后再试（可被退出打断）
+                        if (!SleepInterruptible(3000)) break;
                         continue;
                     }
                 }
@@ -381,8 +390,8 @@ static DWORD WINAPI MonitorThreadProc(LPVOID)
             }
         }
 
-        // 2500ms —— 和JiYuTrainer默认3100ms同一量级
-        Sleep(2500);
+        // 2500ms —— 和JiYuTrainer默认3100ms同一量级（可被退出打断）
+        if (!SleepInterruptible(2500)) break;
     }
     logger::Info(L"极域注入监控线程已停止");
     return 0;
