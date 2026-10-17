@@ -320,9 +320,11 @@ static void StopMonitorThread()
 {
     g_monitorRunning = false;
     if (g_hMonitorThread) {
-        // 线程以 100ms 粒度检查标志，通常 <200ms 内退出；给足余量即可，
-        // 超时不再等待（无需 TerminateThread，进程即将退出），保证关闭不卡。
-        WaitForSingleObject(g_hMonitorThread, 1500);
+        // 线程以 100ms 粒度检查标志，通常 <200ms 内退出；给足余量，超时强杀
+        DWORD result = WaitForSingleObject(g_hMonitorThread, 1500);
+        if (result != WAIT_OBJECT_0) {
+            TerminateThread(g_hMonitorThread, 0);
+        }
         CloseHandle(g_hMonitorThread);
         g_hMonitorThread = nullptr;
     }

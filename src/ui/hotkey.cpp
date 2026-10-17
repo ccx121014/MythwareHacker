@@ -126,9 +126,9 @@ static void DoInstallHook()
 static DWORD WINAPI HookCompeteThreadProc(LPVOID)
 {
     while (g_hookRunning) {
-        // 基础间隔 3 秒（MythwareToolkit 便携版 250ms 是因为它没有其他线程，
-        // 我们有多个后台线程，需要更长的间隔避免系统卡顿）
-        Sleep(3000);
+        // 基础间隔 3 秒（分段睡眠，退出时快速返回）
+        for (int i = 0; i < 30 && g_hookRunning; i++) Sleep(100);
+        if (!g_hookRunning) break;
 
         // 只在极域运行时才重装钩子，避免空转
         // 简化检测：如果距上次安装超过 3 秒就重装一次
@@ -144,10 +144,9 @@ static DWORD WINAPI HookCompeteThreadProc(LPVOID)
 static DWORD WINAPI BlockInputBypassThreadProc(LPVOID)
 {
     while (g_hookRunning) {
-        // 5 秒间隔，远低于原来的 200-500ms
-        // BlockInput 只在极域主动发起键盘锁定时需要解除
-        // 极域不会每秒都调 BlockInput，5 秒检查一次足够
-        Sleep(5000);
+        // 5 秒间隔（分段睡眠，退出时快速返回）
+        for (int i = 0; i < 50 && g_hookRunning; i++) Sleep(100);
+        if (!g_hookRunning) break;
 
         DWORD now = GetTickCount();
         if (now - g_lastBlockInputTick < 5000) continue;

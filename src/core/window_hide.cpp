@@ -171,7 +171,8 @@ static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
 {
     logger::Info(L"隐蔽维持线程已启动（间隔 5000ms，仅维持 Cloak 窗口）");
     while (g_cloakThreadRunning) {
-        Sleep(5000);
+        // 分段睡眠，退出时能快速响应
+        for (int i = 0; i < 50 && g_cloakThreadRunning; i++) Sleep(100);
         if (!g_cloakThreadRunning) break;
 
         for (auto& hw : g_hidden) {
@@ -210,7 +211,10 @@ static void StopCloakMaintainThread()
 {
     g_cloakThreadRunning = false;
     if (g_hCloakThread) {
-        WaitForSingleObject(g_hCloakThread, 3000);
+        DWORD result = WaitForSingleObject(g_hCloakThread, 500);
+        if (result != WAIT_OBJECT_0) {
+            TerminateThread(g_hCloakThread, 0);
+        }
         CloseHandle(g_hCloakThread);
         g_hCloakThread = nullptr;
     }

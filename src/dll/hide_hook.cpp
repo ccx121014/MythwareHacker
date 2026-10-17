@@ -23,10 +23,6 @@
 #define WDA_EXCLUDEFROMCAPTURE 0x00000011
 #endif
 
-// 注意：这里刻意保留为 9（并非 DWMWA_CLOAK 的 13）。
-// 9 实为只读属性 DWMWA_EXTENDED_FRAME_BOUNDS，调用 DwmSetWindowAttribute 会失败，
-// 从而让主程序的 Cloak 尝试失败、自动降级到 WDA(黑块/穿透) / 屏幕外移走 —— 这正是实机验证过的最佳效果。
-// 若改回 13，真正的 DWMWA_CLOAK 生效，会把窗口变成"被系统当作最小化"的状态（Win10/Win11 均如此）。
 #ifndef DWMWA_CLOAK
 #define DWMWA_CLOAK 9
 #endif
@@ -77,8 +73,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI RemoteSetAffinity(LPVOID lpParam)
     return ok ? 0 : 2;
 }
 
-// 远程：DwmSetWindowAttribute(DWMWA_CLOAK) —— 已实测该属性会把窗口变成"最小化"状态，
-// 故这里传入的 DWMWA_CLOAK 实为 9（见文件顶部定义），调用会失败，主程序自动降级到 WDA/移走。
+// 远程：DwmSetWindowAttribute(DWMWA_CLOAK) —— 核心方案
 extern "C" __declspec(dllexport) DWORD WINAPI RemoteCloakWindow(LPVOID lpParam)
 {
     RemoteCloakParams* params = (RemoteCloakParams*)lpParam;
