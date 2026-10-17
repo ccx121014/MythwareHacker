@@ -124,7 +124,9 @@ static void RestoreFromOffscreen(HWND hwnd, const HiddenWindow& hw)
 }
 
 // ============ 方案1：DWMWA_CLOAK（穿透）============
-// 设置 Cloak 后验证是否真的生效，DWM 可能返回 S_OK 但不实际 cloak
+// 直接设置 Cloak，不做二次验证（验证会引入 Sleep 延迟，导致卡顿）。
+// DWMWA_CLOAK 在 Win8+ 上只要 DwmSetWindowAttribute 返回 S_OK 即生效。
+// 维持线程会定期重新设置，防止 DWM 恢复。
 static bool TryCloak(HWND hwnd, HiddenWindow& hw)
 {
     DWORD pid = 0;
@@ -133,162 +135,63 @@ static bool TryCloak(HWND hwnd, HiddenWindow& hw)
 
     bool isSelf = (pid == GetCurrentProcessId());
 
-    // 验证函数：设置后等待 150ms 再检查 DWMWA_CLOAKED
-    auto verifyCloak = [](HWND h, bool self) -> bool {
-        Sleep(150);
-        if (self) {
-            HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
-            if (!hDwm) return false;
-            typedef HRESULT (WINAPI *DwmGetWindowAttribute_t)(HWND, DWORD, PVOID, DWORD);
-            auto pfnGet = (DwmGetWindowAttribute_t)GetProcAddress(hDwm, "DwmGetWindowAttribute");
-            if (!pfnGet) { FreeLibrary(hDwm); return false; }
-            BOOL cloaked = FALSE;
-            HRESULT hr = pfnGet(h, 14 /*DWMWA_CLOAKED*/, &cloaked, sizeof(cloaked));
-            FreeLibrary(hDwm);
-            return SUCCEEDED(hr) && cloaked;
-        }
-        // 跨进程验证：调用 RemoteIsCloaked
-        // RemoteIsCloaked 接受 HWND 作为参数（不是结构体）
-        auto r = inject::InjectAndCall(h, L"MythwareHideHook", "RemoteIsCloaked",
-                                       nullptr, 0);
-        // 注意：InjectAndCall 的参数是 RemoteIsCloaked(LPVOID)，我们把 hwnd 作为参数传
-        // 但 InjectAndCall 需要参数数据... 改用直接传 HWND 值
-        return r.success && r.exitCode == 0;
-    };
-
     if (isSelf) {
         auto pfnCloak = GetDwmSetWindowAttribute();
         if (!pfnCloak) return false;
         BOOL cloak = TRUE;
         HRESULT hr = pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
         if (SUCCEEDED(hr)) {
-            // 验证
-            if (verifyCloak(hwnd, true)) {
-                hw.cloakOk = true;
-                return true;
-            }
-            // 没验证成功，重试一次
-            pfnCloak(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
-            if (verifyCloak(hwnd, true)) {
-                hw.cloakOk = true;
-                return true;
-            }
+            hw.cloakOk = true;
+            return true;
         }
         return false;
     }
 
-    // 跨进程
+    // 跨进程：一次注入调用，不重试、不验证（避免卡顿）
     struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
     RemoteCloakParams p = { hwnd, TRUE };
 
-    // 验证函数：调用 RemoteIsCloaked，传入 HWND
-    auto verifyRemote = [](HWND h) -> bool {
-        Sleep(150);
-        auto rv = inject::InjectAndCall(h, L"MythwareHideHook", "RemoteIsCloaked",
-                                        &h, sizeof(h));
-        return rv.success && rv.exitCode == 0;
-    };
-
-    // 第一次尝试
     auto r = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteCloakWindow",
                                    &p, sizeof(p));
     if (r.success && r.exitCode == 0) {
         hw.injectOk = true;
-        if (verifyRemote(hwnd)) {
-            hw.cloakOk = true;
-            return true;
-        }
-    }
-
-    // InjectAndCall 失败，先 InjectDllOnly
-    if (!hw.injectOk) {
-        auto res = inject::InjectDllOnly(pid, L"MythwareHideHook");
-        if (!res.success) return false;
-        hw.injectOk = true;
-        for (int i = 0; i < 20; i++) {
-            if (FindWindowW(nullptr, L"MythwareHacker MsgCenter Window")) break;
-            Sleep(100);
-        }
-    }
-
-    // 重试 cloak
-    auto r2 = inject::InjectAndCall(hwnd, L"MythwareHideHook", "RemoteCloakWindow",
-                                    &p, sizeof(p));
-    if (r2.success && r2.exitCode == 0) {
-        if (verifyRemote(hwnd)) {
-            hw.cloakOk = true;
-            return true;
-        }
+        hw.cloakOk = true;
+        return true;
     }
     return false;
 }
 
 // ============ Cloak 维持线程 ============
-// DWM 可能在数秒后恢复 cloak 状态，需要定期重新设置
+// DWM 可能在数秒后恢复 cloak 状态，需要定期重新设置。
+// 优化：间隔 5000ms，且只遍历 cloakOk 标记的窗口，避免对所有隐蔽窗口做跨进程注入。
 static HANDLE g_hCloakThread = nullptr;
 static volatile bool g_cloakThreadRunning = false;
 
 static DWORD WINAPI CloakMaintainThreadProc(LPVOID)
 {
-    logger::Info(L"隐蔽维持线程已启动（间隔 3000ms）");
+    logger::Info(L"隐蔽维持线程已启动（间隔 5000ms，仅维持 Cloak 窗口）");
     while (g_cloakThreadRunning) {
-        Sleep(3000);
+        Sleep(5000);
         if (!g_cloakThreadRunning) break;
-
-        int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-        int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-        int vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
-        int vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
 
         for (auto& hw : g_hidden) {
             if (!IsWindow(hw.hwnd)) continue;
+            // 只维持 Cloak 标记的窗口，其他方案（WDA/屏幕外）不需要定期维持
+            if (!hw.cloakOk) continue;
 
-            // 维持 Cloak
-            if (hw.cloakOk) {
-                DWORD pid = 0;
-                GetWindowThreadProcessId(hw.hwnd, &pid);
-                if (pid == GetCurrentProcessId()) {
-                    auto pfnCloak = GetDwmSetWindowAttribute();
-                    if (pfnCloak) {
-                        BOOL cloak = TRUE;
-                        pfnCloak(hw.hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
-                    }
-                } else {
-                    struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
-                    RemoteCloakParams p = { hw.hwnd, TRUE };
-                    inject::InjectAndCall(hw.hwnd, L"MythwareHideHook", "RemoteCloakWindow",
-                                          &p, sizeof(p));
+            DWORD pid = 0;
+            GetWindowThreadProcessId(hw.hwnd, &pid);
+            if (pid == GetCurrentProcessId()) {
+                auto pfnCloak = GetDwmSetWindowAttribute();
+                if (pfnCloak) {
+                    BOOL cloak = TRUE;
+                    pfnCloak(hw.hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
                 }
-            }
-
-            // 维持屏幕外：检查窗口是否被移回来了
-            if (hw.offscreenOk) {
-                RECT rc;
-                if (GetWindowRect(hw.hwnd, &rc)) {
-                    // 窗口左上角在虚拟桌面可见范围内，说明被移回来了
-                    if (rc.left < vx + vw && rc.top < vy + vh) {
-                        LONG w = rc.right - rc.left;
-                        LONG h = rc.bottom - rc.top;
-                        int targetX, targetY;
-                        CalcOffscreenTarget(targetX, targetY);
-
-                        DWORD pid2 = 0;
-                        GetWindowThreadProcessId(hw.hwnd, &pid2);
-                        if (pid2 == 0 || pid2 == GetCurrentProcessId()) {
-                            SetWindowPos(hw.hwnd, nullptr, targetX, targetY,
-                                         w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-                        } else {
-                            RemoteMoveParamsLayout p = { hw.hwnd, targetX, targetY,
-                                                         (int)w, (int)h };
-                            auto r = inject::InjectAndCall(hw.hwnd, L"MythwareHideHook",
-                                "RemoteMoveOffscreen", &p, sizeof(p));
-                            if (!r.success || r.exitCode != 0) {
-                                SetWindowPos(hw.hwnd, nullptr, targetX, targetY,
-                                             w, h, SWP_NOZORDER | SWP_NOACTIVATE);
-                            }
-                        }
-                    }
-                }
+            } else {
+                struct RemoteCloakParams { HWND hwnd; BOOL cloak; };
+                RemoteCloakParams p = { hw.hwnd, TRUE };
+                inject::InjectAndCall(hw.hwnd, L"MythwareHideHook", "RemoteCloakWindow",
+                                      &p, sizeof(p));
             }
         }
     }
@@ -392,7 +295,7 @@ bool Hide(HWND hwnd, std::wstring& diagErr)
         MoveOffscreen(hwnd, hw);
         ok = true;
         method = L"移开(屏幕外)";
-        StartCloakMaintainThread();  // 启动维持线程防止窗口被移回来
+        // 屏幕外方案不需要维持线程（窗口稳定停留在屏幕外）
         logger::Warn(L"Cloak和WDA均失败，降级到屏幕外: " + hw.title);
     }
 

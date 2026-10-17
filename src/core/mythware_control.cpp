@@ -193,8 +193,8 @@ static int ScanAndKillDynamicProcesses(std::vector<std::wstring>& killed)
     return count;
 }
 
-// 内部：停止并删除服务
-static bool StopAndDeleteService(const std::wstring& serviceName)
+// 内部：停止服务（关键：先只用 STOP 权限打开，避免因缺少 DELETE 权限导致整个 OpenService 失败）
+static bool StopService(const std::wstring& serviceName)
 {
     SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
     if (!hSCM) {
@@ -202,12 +202,12 @@ static bool StopAndDeleteService(const std::wstring& serviceName)
         return false;
     }
 
+    // 只用 STOP | QUERY_STATUS 打开，确保即使没有 DELETE 权限也能停止服务
     SC_HANDLE hSvc = OpenServiceW(hSCM, serviceName.c_str(),
-                                  SERVICE_STOP | DELETE | SERVICE_QUERY_STATUS);
+                                  SERVICE_STOP | SERVICE_QUERY_STATUS);
     if (!hSvc) {
         DWORD err = GetLastError();
         CloseServiceHandle(hSCM);
-        // 服务不存在视为成功
         if (err == ERROR_SERVICE_DOES_NOT_EXIST) {
             logger::Info(L"服务 " + serviceName + L" 不存在，跳过");
             return true;
@@ -216,30 +216,45 @@ static bool StopAndDeleteService(const std::wstring& serviceName)
         return false;
     }
 
-    // 先 ControlService(SERVICE_CONTROL_STOP) 停止
+    // 发送停止控制
     SERVICE_STATUS ss = {};
     if (ControlService(hSvc, SERVICE_CONTROL_STOP, &ss)) {
-        // 等待停止完成
-        for (int i = 0; i < 10; i++) {
+        // 等待停止完成（最多 3 秒）
+        for (int i = 0; i < 15; i++) {
             if (QueryServiceStatus(hSvc, &ss) && ss.dwCurrentState == SERVICE_STOPPED) {
                 break;
             }
             Sleep(200);
         }
         logger::Info(L"已停止服务 " + serviceName);
-    }
-
-    // 再 DeleteService 删除
-    bool ok = DeleteService(hSvc) != 0;
-    if (!ok) {
-        logger::Warn(L"删除服务 " + serviceName + L" 失败: " + WSTR(GetLastError()));
     } else {
-        logger::Info(L"已删除服务 " + serviceName);
+        logger::Warn(L"ControlService(STOP) " + serviceName + L" 失败: " + WSTR(GetLastError()));
     }
 
     CloseServiceHandle(hSvc);
     CloseServiceHandle(hSCM);
-    return ok;
+    return true;
+}
+
+// 内部：删除服务（尽力而为，失败不影响停止效果）
+static void DeleteServiceBestEffort(const std::wstring& serviceName)
+{
+    SC_HANDLE hSCM = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!hSCM) return;
+
+    SC_HANDLE hSvc = OpenServiceW(hSCM, serviceName.c_str(), DELETE);
+    if (!hSvc) {
+        CloseServiceHandle(hSCM);
+        return;
+    }
+
+    if (DeleteService(hSvc)) {
+        logger::Info(L"已删除服务 " + serviceName);
+    }
+    // 删除失败不打印警告（可能权限不足，服务已停止即可）
+
+    CloseServiceHandle(hSvc);
+    CloseServiceHandle(hSCM);
 }
 
 KillResult KillClassroomHelper()
@@ -247,31 +262,35 @@ KillResult KillClassroomHelper()
     KillResult result = {};
 
     // 重要：必须先停止服务，再杀进程！
-    // 否则服务监控会自动重启进程
+    // 否则服务监控会自动重启进程。
+    // 参考 MythwareToolkit assistant.cpp：先 ControlService(STOP)，再 KillProcess。
 
-    // 1. 先停止并删除 zmserv 服务（防止服务重启进程）
-    StopAndDeleteService(L"zmserv");
+    // 1. 先停止 zmserv 服务（防止服务重启进程）
+    StopService(L"zmserv");
 
-    // 等待服务完全停止
+    // 2. 等待服务完全停止
     Sleep(500);
 
-    // 2. 再杀固定进程名（守护进程和主进程）
+    // 3. 再杀固定进程名（守护进程和主进程）
     for (const auto& name : CLASSROOM_PROCESS_NAMES) {
         result.killedCount += KillProcessByName(name, result.killedNames);
     }
 
-    // 3. 生成动态进程名并杀掉（v9.x ~ v12.x）
+    // 4. 生成动态进程名并杀掉（v9.x ~ v12.x）
     auto dynamicNames = GenerateDynamicProcessNames();
     for (const auto& name : dynamicNames) {
         result.killedCount += KillProcessByName(name, result.killedNames);
     }
 
-    // 4. 扫描回退
+    // 5. 扫描回退
     result.killedCount += ScanAndKillDynamicProcesses(result.killedNames);
+
+    // 6. 尽力删除服务（防止重启后服务自动启动）
+    DeleteServiceBestEffort(L"zmserv");
 
     logger::Info(L"共杀掉 " + WSTR(result.killedCount) + L" 个助手进程");
 
-    // 5. 启动持续监控线程，防止机房助手1秒后重启
+    // 7. 启动持续监控线程，防止机房助手重启
     if (result.killedCount > 0) {
         StartClassroomMonitor();
     }
@@ -281,7 +300,7 @@ KillResult KillClassroomHelper()
 
 // ---------------------------------------------------------------------------
 // 机房助手持续监控线程
-// 解决杀完后1秒又重启的问题：后台每2秒检查一次，自动杀掉
+// 解决杀完后又重启的问题：后台每5秒检查一次，发现重启立即停止服务并杀掉
 // ---------------------------------------------------------------------------
 
 static HANDLE g_hClassroomMonitorThread = nullptr;
@@ -329,19 +348,19 @@ static int KillClassroomProcessesQuick()
 
 static DWORD WINAPI ClassroomMonitorThreadProc(LPVOID)
 {
-    logger::Info(L"机房助手监控线程已启动（每2秒检查）");
+    logger::Info(L"机房助手监控线程已启动（每5秒检查）");
     while (g_classroomMonitorRunning) {
         if (IsAnyClassroomProcessRunning()) {
-            logger::Info(L"监控线程发现机房助手进程，正在杀掉...");
-            // 再次停止服务（防止服务守护重启）
-            StopAndDeleteService(L"zmserv");
+            logger::Info(L"监控线程发现机房助手进程，正在停止服务并杀掉...");
+            // 先停止服务（防止服务守护重启进程）
+            StopService(L"zmserv");
             // 杀掉固定进程名
             int killed = KillClassroomProcessesQuick();
             if (killed > 0) {
                 logger::Info(L"监控线程杀掉 " + WSTR(killed) + L" 个机房助手进程");
             }
         }
-        Sleep(2000);
+        Sleep(5000);
     }
     logger::Info(L"机房助手监控线程已停止");
     return 0;

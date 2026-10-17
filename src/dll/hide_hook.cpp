@@ -24,7 +24,7 @@
 #endif
 
 #ifndef DWMWA_CLOAK
-#define DWMWA_CLOAK 9
+#define DWMWA_CLOAK 13
 #endif
 
 #ifndef DWMWA_CLOAKED
